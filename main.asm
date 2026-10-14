@@ -26,28 +26,70 @@
 .eqv ROSA         0x00FF00FF 
 
 .data
+quadros: .word
+
+#---MAQUINA DE ESTADO-----------------------------------------------
+estado:       .word E_MENU
+estado_novo:  .word 1 # 1 se tiver acabado de trocar de estado e 0 c.c
+quadros_est:  .word 0 #quadros desde que entrou no estado
+#tabela_estados: ,word est_menu, est_jogo, est_pausa
+#----ENTRADAS------------------------------------------------------
+tecla:        .word 0 
+
+
+#---MENSAGENS-------------------------------------------------------
+msg_erro_estado: .asciiz "ERRO: estado invalido"
 
 .text
 main: 
-  li $a1, 1
-  li $a2, BRANCO
-  jal pintar_linha
+  #INICIO DE TESTE
+  #li $a1, 1
+  #li $a2, BRANCO
+  #jal pintar_linha
   
-  li $a1, 2
-  li $a2, AZUL
-  jal pintar_linha
+  #li $a1, 2
+  #li $a2, AZUL
+  #jal pintar_linha
   
-  li $a1, 3
-  li $a2, ROSA
-  jal pintar_linha
+  #li $a1, 3
+  #li $a2, ROSA
+  #jal pintar_linha
   
-  li $a1, 4
-  li $a2, VERMELHO
-  jal pintar_linha
+  #li $a1, 4
+  #li $a2, VERMELHO
+  # jal pintar_linha
+  jal ler_entrada
+  beq $v0, $zero, main
+  add $a0, $zero, $v1
+  addi $v0, $zero, 1 
+  syscall
+ 
+  #FIM DO TESTE
   
-  j terminar_programa
-   
+  #li $a0, E_MENU
+  
+  j main
+ 
+loop_principal:
+	#jal ler_entrada
+	
+    lw $t0, estado                   #checar estado atual
+    blt $t0, $zero, estado_invalido  #condicao de estado valido
+    li $t1, N_ESTADOS		 #condi
+    bge $t0, $t1, estado_invalido
+ 
+    sll $t1, $t0, 2      #indice na jump table *4 bytes
+    #la $t2, tabela_estados
+    add $t2, $t2, $t1 
+    lw $t2, 0($t2)       #endereco do estado
+   	
+    lw $a0, estado_novo   # $a0 = 1 no primeiro quadro
+    sw $zero, estado_novo # limpa antes de chamar 
+   	
+    jalr $t2
 
+    estado_invalido:
+    j terminar_programa
 
 #--------------------------------------------------------------------
 # pintar — acende uma celula
@@ -68,8 +110,8 @@ pintar:
     li    $t9, BASE         
     add   $t8, $t8, $t9         #endereco = base + (y*LARG +X)*bytes por celula
     sw    $a2, 0($t8)                 
-pintar_fim:
-    jr    $ra
+    pintar_fim:
+        jr    $ra
 
 # escolha uma linha (y) em $a1 e uma cor em $a1 2
 pintar_linha:
@@ -78,19 +120,73 @@ pintar_linha:
     
     add $a0, $zero, $zero  #inicializar percurso em x = 0
     
-loop_pintar:
-    beq $a0, LARG, sai_loop_pintar
-    jal pintar
+    loop_pintar:
+        beq $a0, LARG, sai_loop_pintar
+        jal pintar
     
-    addi $a0, $a0, 1
-    j loop_pintar
+        addi $a0, $a0, 1
+        j loop_pintar
 
-sai_loop_pintar:    
-    lw  $ra, 0($sp)
-    add $sp, $sp, 4
-    jr  $ra
-    
-    
+    sai_loop_pintar:    
+        lw  $ra, 0($sp)
+        add $sp, $sp, 4
+        jr  $ra
+  
+#---ESTADOS---------------------------------------------------------
+
+
+#---FIM ESTADOS-----------------------------------------------------
+
+#---TRATAMENTO DE ENTRADAS------------------------------------------
+#-------------------------------------------------------------------
+#ler_entrada: salva entrada em "tecla", salva 0 em tecla c.c.
+#		se houve leitura $v0 =1, 0 c.c.
+# 		v1 retorna a leitura
+#-------------------------------------------------------------------
+ler_entrada:
+  lui $t0, 0xffff   #endereco do bit de controle
+  lw $t1, 0($t0)    #queremos ver se é 0 (sem entrada) ou 1 (com entada)
+  andi $t1, $t1, 1  # $t1 =1 se tem entrada
+  beq  $t1, $zero, entrada_vazia
+  lw   $t2, 4($t0)  #codigo ASCII do caractere
+  
+  #transformar maiusculas em minusculas
+  li $t3, 65            
+  blt $t2, $t3, salvar_leitura   #se a entrada é menor que 65 nao é maiuscula
+  li $t3, 90
+  bgt $t2, $t3, salvar_leitura  #se a entrada é maior que 90 nao é maiscula
+  addi $t2, $t2, 32            #se a entrada é maiuscula, se converte para minuscula
+  
+  salvar_leitura:
+      sw $t2, tecla
+      li $v0, 1
+      add $v1, $t2, $zero 
+      jr $ra
+  
+  entrada_vazia:
+      sw $zero, tecla
+      li $v0, 0
+      add $v1,$zero, $zero
+      jr $ra
+#-------------------------------------------------------------------
+#ler_entrada: salva entrada em "tecla", salva 0 em tecla c.c.
+#		se houve leitura $v0 =1, 0 c.c.
+# 		v1 retorna a leitura
+#-------------------------------------------------------------------
+
+limpar_buffer:
+  lui $t0, 0xffff
+  
+  lb_loop:
+      lw $t1, 0($t0)
+      andi $t1,$t1,1 
+      beqz $t1, lb_fim
+      lw $t1, 4($t0) #le e descarta
+      j lb_loop
+      
+  lb_fim: 
+     jr $ra
+  
       
 #--------------------------------------------------------------------
 # terminar execucao
