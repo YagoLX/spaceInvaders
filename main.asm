@@ -7,7 +7,7 @@
 .eqv NPIX       2048            # LARG * ALT
 .eqv BASE       0x10040000      # heap
 
-.eqv MS_QUADRO  50
+.eqv MS_QUADRO  50              #um quadro dura 50 ms
 
 #---ESTADOS----------------------------------------------------------
 .eqv E_MENU     0
@@ -24,15 +24,21 @@
 .eqv AMARELO      0x00FFFF00
 .eqv CIANO        0x0000FFFF
 .eqv ROSA         0x00FF00FF 
+#--ASCII DE TECLAS-------------------------------------------------
+.eqv TECLA_A      97
+.eqv TECLA_D      100
+.eqv TECLA_ESPACO 32
+.eqv TECLA_P      112
 
 .data
-quadros: .word
+quadros: .word 0
 
 #---MAQUINA DE ESTADO-----------------------------------------------
-estado:       .word E_MENU
-estado_novo:  .word 1 # 1 se tiver acabado de trocar de estado e 0 c.c
-quadros_est:  .word 0 #quadros desde que entrou no estado
-#tabela_estados: ,word est_menu, est_jogo, est_pausa
+estado:         .word E_MENU
+estado_novo:    .word 1 # 1 se tiver acabado de trocar de estado e 0 c.c
+quadros_est:    .word 0 #quadros desde que entrou no estado
+tabela_estados: .word est_menu, est_jogo, est_pausa
+
 #----ENTRADAS------------------------------------------------------
 tecla:        .word 0 
 
@@ -42,7 +48,7 @@ msg_erro_estado: .asciiz "ERRO: estado invalido"
 
 .text
 main: 
-  #INICIO DE TESTE
+  #-------INICIO DE TESTE------#
   #li $a1, 1
   #li $a2, BRANCO
   #jal pintar_linha
@@ -54,42 +60,49 @@ main:
   #li $a1, 3
   #li $a2, ROSA
   #jal pintar_linha
-  
+  #
   #li $a1, 4
   #li $a2, VERMELHO
   # jal pintar_linha
-  jal ler_entrada
-  beq $v0, $zero, main
-  add $a0, $zero, $v1
-  addi $v0, $zero, 1 
-  syscall
- 
+  #------------------------------#
+  #jal ler_entrada
+  #beq $v0, $zero, main
+  #add $a0, $zero, $v1
+  #addi $v0, $zero, 1 
+  #syscall
+ #------------------------------#
   #FIM DO TESTE
   
-  #li $a0, E_MENU
   
-  j main
- 
-loop_principal:
-	#jal ler_entrada
-	
-    lw $t0, estado                   #checar estado atual
-    blt $t0, $zero, estado_invalido  #condicao de estado valido
-    li $t1, N_ESTADOS		 #condi
-    bge $t0, $t1, estado_invalido
- 
-    sll $t1, $t0, 2      #indice na jump table *4 bytes
-    #la $t2, tabela_estados
-    add $t2, $t2, $t1 
-    lw $t2, 0($t2)       #endereco do estado
-   	
-    lw $a0, estado_novo   # $a0 = 1 no primeiro quadro
-    sw $zero, estado_novo # limpa antes de chamar 
-   	
-    jalr $t2
+  #li $a0, E_MENU
+  li $a0, E_MENU
+  jal mudar_estado
+  
+  
+loop_principal:     #ler_entrada -> atualizar -> desenhar ->esperar ->esperar -> ler_entrada ...
+    jal ler_entrada
+    
+    lw $t0, estado                 #$t0 recebe o estado que vamos analisar
+    bltz $t0, estado_invalido      # estado < 0 é invalido
+    li $t1, N_ESTADOS          
+    bge $t0, $t1, estado_invalido  #estado > estado de maior numero é estado invalido
+    
+    sll $t1, $t0, 2                #$t1 recebe o deslocamento para acessar onde está a funcao desse estados
+    la $t2, tabela_estados            #recebe a posicao de memoria da tabela de estaso
+    add $t2, $t2, $t1              #recebe endereco da funcao do estado atual
+    lw $t2, 0($t2)                 #recebe o endereco do estado
+    
+    lw   $a0, estado_novo    # $a0 = 1 no primeiro quadro do estado
+    sw   $zero, estado_novo  # abaixa ANTES de chamar
+    jalr $t2                       #roda o estado
+    
 
+    
+    jal esperar
+    j loop_principal
+    
     estado_invalido:
-    j terminar_programa
+        j terminar_programa
 
 #--------------------------------------------------------------------
 # pintar — acende uma celula
@@ -113,15 +126,15 @@ pintar:
     pintar_fim:
         jr    $ra
 
-# escolha uma linha (y) em $a1 e uma cor em $a1 2
+# escolha uma linha (y) em $a1 e uma cor em $a2
 pintar_linha:
     add $sp, $sp, -4
     sw $ra, 0($sp)
     
     add $a0, $zero, $zero  #inicializar percurso em x = 0
-    
+        li $t0, LARG
     loop_pintar:
-        beq $a0, LARG, sai_loop_pintar
+        beq $a0, $t0, sai_loop_pintar
         jal pintar
     
         addi $a0, $a0, 1
@@ -131,11 +144,123 @@ pintar_linha:
         lw  $ra, 0($sp)
         add $sp, $sp, 4
         jr  $ra
-  
+
+#pintar_tela: escolha uma cor em $a2
+pintar_tela:
+    addi $sp, $sp, -8
+    sw $ra, 0($sp)
+    sw $s0, 4($sp)
+    
+    li $s0, 0
+    
+    pintar_tela_loop:
+        li $t0, ALT
+        bge $s0, $t0, pintar_tela_fim
+        add $a1, $s0, $zero
+        jal pintar_linha
+        addi $s0, $s0, 1
+        j pintar_tela_loop
+    
+    pintar_tela_fim:
+         lw $ra, 0($sp)
+         lw $s0, 4($sp)
+         addi $sp, $sp, 8
+         jr $ra
+    
 #---ESTADOS---------------------------------------------------------
+#   recebe a flag estado_novo em $a0
+#------------------------------------------------------------------
+est_menu:
+    addi $sp, $sp, -8
+    sw   $ra, 0($sp)
+    sw   $a0, 4($sp)
 
+    lw   $t0, 4($sp)
+    beqz $t0, menu_corpo
+    li   $a2, AZUL              # bloco de entrada: pinta uma vez quando a flag estado_novo é 1
+    jal  pintar_tela
 
+    menu_corpo:
+      lw   $t0, tecla
+      li   $t1, TECLA_ESPACO              # Enter
+      bne  $t0, $t1, menu_fim
+      li   $a0, E_JOGO
+      jal  mudar_estado
+
+    menu_fim:
+      lw   $ra, 0($sp)
+      lw   $a0, 4($sp)
+      addi $sp, $sp, 8
+      jr   $ra
+   
+est_jogo:
+    addi $sp, $sp, -8
+    sw   $ra, 0($sp)
+    sw   $a0, 4($sp)
+
+    lw   $t0, 4($sp)
+    beqz $t0, jogo_corpo
+    li   $a2, VERDE               
+    jal  pintar_tela
+    
+    jogo_corpo:
+      lw   $t0, tecla
+      li   $t1, TECLA_ESPACO        # Enter
+      bne  $t0, $t1, jogo_fim
+      li   $a0, E_MENU
+      jal  mudar_estado
+     
+    jogo_fim:
+      lw   $ra, 0($sp)
+      lw   $a0, 4($sp)
+      addi $sp, $sp, 8
+      jr   $ra
+
+est_pausa:
+   jr $ra
+#--------------------------------------------------------------------
+# mudar_estado: alterna o estado atual
+#    $a0 é o proximo estado
+#     
+#--------------------------------------------------------------------    
+mudar_estado:
+    addi $sp, $sp, -4
+    sw $ra, 0($sp)
+    
+    #subir flag estado_novo
+    sw $a0, estado
+    li $t0, 1
+    sw $t0, estado_novo # se mudou de estado devemos colocar a tag estado_novo para true (1)
+    
+    #reiniciar quadros est
+    li $t0, -1
+    sw $t0, quadros_est
+    
+    jal limpar_buffer
+    
+    lw $ra, 0($sp)
+    addi $sp, $sp, 4
+    jr $ra 
+    
 #---FIM ESTADOS-----------------------------------------------------
+
+#--------------------------------------------------------------------
+# esperar: faz o frame esperar o tempo de um frame antes de prosseguir
+#--------------------------------------------------------------------
+esperar: 
+  li $a0, MS_QUADRO
+  li $v0, 32
+  syscall
+  #atulaizar quadros_est
+  lw $t0, quadros_est      
+  addi $t0, $t0, 1
+  sw $t0, quadros_est
+  
+  #atualizar quadros
+  lw $t0, quadros
+  addi $t0, $t0, 1 
+  sw $t0, quadros
+  jr $ra
 
 #---TRATAMENTO DE ENTRADAS------------------------------------------
 #-------------------------------------------------------------------
@@ -185,6 +310,7 @@ limpar_buffer:
       j lb_loop
       
   lb_fim: 
+     sw $zero, tecla
      jr $ra
   
       
