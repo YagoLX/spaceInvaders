@@ -25,10 +25,15 @@
 .eqv CIANO        0x0000FFFF
 .eqv ROSA         0x00FF00FF 
 #--ASCII DE TECLAS-------------------------------------------------
+.eqv TECLA_ENTER  10
+.eqv TECLA_ESPACO 32
 .eqv TECLA_A      97
 .eqv TECLA_D      100
-.eqv TECLA_ESPACO 32
 .eqv TECLA_P      112
+
+#--AUXILIARES PARA NAVE--------------------------------------------
+.eqv NAVE_Y 60
+.eqv X_MAX_NAVE 29 #LARGURA - 3 (largura da nave)
 
 .data
 quadros: .word 0
@@ -42,9 +47,16 @@ tabela_estados: .word est_menu, est_jogo, est_pausa
 #----ENTRADAS------------------------------------------------------
 tecla:        .word 0 
 
+#---ESTADO JOGO---------------------------------------------------
+nave_x:   .word 16 #LARG/2
+ha_tiro:  .word 0
 
 #---MENSAGENS-------------------------------------------------------
 msg_erro_estado: .asciiz "ERRO: estado invalido"
+
+#---DUPLA BUFFERIZACAO---------------------------------------------
+.align 2
+buffer_tela: .space 8192 #Numero de Pixels * 4
 
 .text
 main: 
@@ -95,8 +107,7 @@ loop_principal:     #ler_entrada -> atualizar -> desenhar ->esperar ->esperar ->
     lw   $a0, estado_novo    # $a0 = 1 no primeiro quadro do estado
     sw   $zero, estado_novo  # abaixa ANTES de chamar
     jalr $t2                       #roda o estado
-    
-
+    jal copiar_buffer
     
     jal esperar
     j loop_principal
@@ -120,7 +131,7 @@ pintar:
     sll   $t8, $a1, 5           # y * LARG
     add   $t8, $t8, $a0         # + x
     sll   $t8, $t8, 2           # * 4 bytes
-    li    $t9, BASE         
+    la    $t9, buffer_tela         
     add   $t8, $t8, $t9         #endereco = base + (y*LARG +X)*bytes por celula
     sw    $a2, 0($t8)                 
     pintar_fim:
@@ -166,6 +177,22 @@ pintar_tela:
          lw $s0, 4($sp)
          addi $sp, $sp, 8
          jr $ra
+#-----------------------------------------------------------------
+# copiar_buffer: despeja o buffer na memoria da tela
+#-----------------------------------------------------------------
+copiar_buffer:
+    la $t0, buffer_tela
+    li $t1, BASE
+    li $t2, NPIX
+    copiar_buffer_loop:
+        lw $t3, 0($t0)
+        sw $t3, 0($t1)
+        addi $t0, $t0, 4
+        addi $t1, $t1, 4
+        addi $t2, $t2, -1
+        bne $t2, $zero, copiar_buffer_loop
+        jr $ra
+
     
 #---ESTADOS---------------------------------------------------------
 #   recebe a flag estado_novo em $a0
@@ -209,6 +236,7 @@ est_jogo:
       bne  $t0, $t1, jogo_fim
       li   $a0, E_MENU
       jal  mudar_estado
+      j jogo_fim
      
     jogo_fim:
       lw   $ra, 0($sp)
@@ -243,6 +271,13 @@ mudar_estado:
     jr $ra 
     
 #---FIM ESTADOS-----------------------------------------------------
+
+#---NAVE------------------------------------------------------------
+#-------------------------------------------------------------------
+# mover_nave: le TECLA, atualiza nave_x ->cuidado bordas
+#-------------------------------------------------------------------
+mover_nave:
+
 
 #--------------------------------------------------------------------
 # esperar: faz o frame esperar o tempo de um frame antes de prosseguir
