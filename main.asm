@@ -15,6 +15,8 @@
 .eqv E_PAUSA    2
 .eqv N_ESTADOS  3
 
+
+
 #--CODIGO DE CORES--------------------------------------------------
 .eqv PRETO        0x00000000
 .eqv BRANCO       0x00FFFFFF
@@ -23,17 +25,23 @@
 .eqv AZUL         0x000000FF
 .eqv AMARELO      0x00FFFF00
 .eqv CIANO        0x0000FFFF
-.eqv ROSA         0x00FF00FF 
+.eqv ROSA         0x00FF00FF
+
+ 
+ .eqv COR_TIRO_J AMARELO
+ .eqv COR_TIRO_I ROSA 
 #--ASCII DE TECLAS-------------------------------------------------
 .eqv TECLA_ENTER  10
 .eqv TECLA_ESPACO 32
 .eqv TECLA_A      97
 .eqv TECLA_D      100
 .eqv TECLA_P      112
-
+.eqv MAX_TECLAS   64
 #--AUXILIARES PARA NAVE--------------------------------------------
 .eqv NAVE_Y 60
 .eqv X_MAX_NAVE 29 #LARGURA - 3 (largura da nave)
+.eqv TIRO_Y_INI 58
+
 
 .data
 quadros: .word 0
@@ -49,7 +57,18 @@ tecla:        .word 0
 
 #---ESTADO JOGO---------------------------------------------------
 nave_x:   .word 16 #LARG/2
-ha_tiro:  .word 0
+
+#---TIRO DO JOGADOR-----------------------------------------------
+ha_tiro_jogador:  .word 0
+tiro_jogador_x:   .word 0
+tiro_jogador_y:   .word 0
+
+#----ENTRADAS------------------------------------------------------
+# Permite mais de uma acao no mesmo quadro
+cmd_mover:   .word 0    # -1 esquerda, 0 parado, +1 direita
+cmd_tiro:    .word 0    # 1 se ESPACO foi apertado neste quadro
+cmd_pausa:   .word 0    # 1 se P foi apertado
+cmd_menu:    .word 0    # 1 se ENTER foi apertado
 
 #---MENSAGENS-------------------------------------------------------
 msg_erro_estado: .asciiz "ERRO: estado invalido"
@@ -139,7 +158,7 @@ pintar:
 
 # escolha uma linha (y) em $a1 e uma cor em $a2
 pintar_linha:
-    add $sp, $sp, -4
+    addi $sp, $sp, -4
     sw $ra, 0($sp)
     
     add $a0, $zero, $zero  #inicializar percurso em x = 0
@@ -206,11 +225,10 @@ est_menu:
     beqz $t0, menu_corpo
     li   $a2, AZUL              # bloco de entrada: pinta uma vez quando a flag estado_novo é 1
     jal  pintar_tela
-
+    
     menu_corpo:
-      lw   $t0, tecla
-      li   $t1, TECLA_ESPACO              # Enter
-      bne  $t0, $t1, menu_fim
+      lw   $t0, cmd_tiro          # Espaco comeca o jogo
+      beqz $t0, menu_fim
       li   $a0, E_JOGO
       jal  mudar_estado
 
@@ -221,31 +239,51 @@ est_menu:
       jr   $ra
    
 est_jogo:
-    addi $sp, $sp, -8
+    addi $sp, $sp, -4
     sw   $ra, 0($sp)
-    sw   $a0, 4($sp)
 
-    lw   $t0, 4($sp)
-    beqz $t0, jogo_corpo
-    li   $a2, VERDE               
-    jal  pintar_tela
-    
     jogo_corpo:
-      lw   $t0, tecla
-      li   $t1, TECLA_ESPACO        # Enter
-      bne  $t0, $t1, jogo_fim
+      lw   $t0, cmd_menu
+      beqz $t0, jogo_testa_pausa
       li   $a0, E_MENU
       jal  mudar_estado
-      j jogo_fim
-     
+      j    jogo_fim
+
+    jogo_testa_pausa:
+      lw   $t0, cmd_pausa
+      beqz $t0, jogo_atualiza
+      li   $a0, E_PAUSA
+      jal  mudar_estado
+      j    jogo_fim
+
+    jogo_atualiza:
+      jal  mover_nave
+      jal mover_tiro_jogador
+
+    jogo_desenha:
+      li   $a2, PRETO
+      jal  pintar_tela             # limpa o buffer
+      jal  desenhar_nave
+      jal desenhar_tiro_jogador
+
     jogo_fim:
       lw   $ra, 0($sp)
-      lw   $a0, 4($sp)
-      addi $sp, $sp, 8
+      addi $sp, $sp, 4
       jr   $ra
 
 est_pausa:
-   jr $ra
+    addi $sp, $sp, -4
+    sw   $ra, 0($sp)
+
+    lw   $t0, cmd_pausa
+    beqz $t0, pausa_fim
+    li   $a0, E_JOGO
+    jal  mudar_estado
+
+    pausa_fim:
+      lw   $ra, 0($sp)
+      addi $sp, $sp, 4
+      jr   $ra
 #--------------------------------------------------------------------
 # mudar_estado: alterna o estado atual
 #    $a0 é o proximo estado
@@ -264,7 +302,7 @@ mudar_estado:
     li $t0, -1
     sw $t0, quadros_est
     
-    jal limpar_buffer
+    jal limpar_buffer_teclado
     
     lw $ra, 0($sp)
     addi $sp, $sp, 4
@@ -277,7 +315,106 @@ mudar_estado:
 # mover_nave: le TECLA, atualiza nave_x ->cuidado bordas
 #-------------------------------------------------------------------
 mover_nave:
+    lw   $t0, cmd_mover
+    beqz $t0, mn_fim                 # parado
+    lw   $t1, nave_x
+    add  $t1, $t1, $t0               # soma -1 ou +1 direto
 
+    bgez $t1, mn_testa_max
+    li   $t1, 0
+    j    mn_grava
+mn_testa_max:
+    li   $t2, X_MAX_NAVE
+    ble  $t1, $t2, mn_grava
+    li   $t1, X_MAX_NAVE
+mn_grava:
+    sw   $t1, nave_x
+mn_fim:
+    jr   $ra
+
+#-----------------------------------------------------------------
+# desenhar_nave: le nave_x, pinta a nave em NAVE_Y
+#-----------------------------------------------------------------
+desenhar_nave:
+    addi $sp, $sp, -4
+    sw   $ra, 0($sp)
+
+    li   $a2, BRANCO
+    li   $a1, NAVE_Y             # corpo: tres celulas
+
+    lw   $a0, nave_x
+    jal  pintar
+    lw   $a0, nave_x
+    addi $a0, $a0, 1
+    jal  pintar
+    lw   $a0, nave_x
+    addi $a0, $a0, 2
+    jal  pintar
+
+    li   $a1, NAVE_Y             # bico: uma acima, no centro
+    addi $a1, $a1, -1
+    lw   $a0, nave_x
+    addi $a0, $a0, 1
+    jal  pintar
+
+    lw   $ra, 0($sp)
+    addi $sp, $sp, 4
+    jr   $ra
+    
+    
+#-------------------------------------------------------------------
+# mover_tiro_jogador
+#   Se nao ha tiro, ESPACO dispara. Se ha, ele sobe e some ao sair.
+#   A flag 'ha_tiro_jogador' sozinha impoe a regra de um tiro por vez
+#-------------------------------------------------------------------
+mover_tiro_jogador:
+    lw   $t0, ha_tiro_jogador
+    bnez $t0, mtj_existe
+
+    # --- nao existe: nasce se apertar ESPACO ---
+    lw   $t1, cmd_tiro
+    beq $t1, $zero, mtj_fim
+    lw   $t3, nave_x
+    addi $t3, $t3, 1             # sai do bico da nave
+    sw   $t3, tiro_jogador_x
+    li   $t3, TIRO_Y_INI
+    sw   $t3, tiro_jogador_y
+    li   $t3, 1
+    sw   $t3, ha_tiro_jogador
+    j    mtj_fim
+
+    # --- existe: sobe uma linha ---
+mtj_existe:
+    lw   $t1, tiro_jogador_y
+    addi $t1, $t1, -1
+    bgez $t1, mtj_grava
+    sw   $zero, ha_tiro_jogador  # saiu pelo topo
+    j    mtj_fim
+mtj_grava:
+    sw   $t1, tiro_jogador_y
+
+mtj_fim:
+    jr   $ra
+
+#-------------------------------------------------------------------
+# desenhar_tiro_jogador — so pinta se a flag estiver levantada
+#-------------------------------------------------------------------
+desenhar_tiro_jogador:
+    addi $sp, $sp, -4
+    sw   $ra, 0($sp)
+
+    lw   $t0, ha_tiro_jogador
+    beqz $t0, dtj_fim
+
+    lw   $a0, tiro_jogador_x
+    lw   $a1, tiro_jogador_y
+    li   $a2, COR_TIRO_J
+    jal  pintar
+
+dtj_fim:
+    lw   $ra, 0($sp)
+    addi $sp, $sp, 4
+    jr   $ra
 
 #--------------------------------------------------------------------
 # esperar: faz o frame esperar o tempo de um frame antes de prosseguir
@@ -304,50 +441,88 @@ esperar:
 # 		v1 retorna a leitura
 #-------------------------------------------------------------------
 ler_entrada:
-  lui $t0, 0xffff   #endereco do bit de controle
-  lw $t1, 0($t0)    #queremos ver se é 0 (sem entrada) ou 1 (com entada)
-  andi $t1, $t1, 1  # $t1 =1 se tem entrada
-  beq  $t1, $zero, entrada_vazia
-  lw   $t2, 4($t0)  #codigo ASCII do caractere
-  
-  #transformar maiusculas em minusculas
-  li $t3, 65            
-  blt $t2, $t3, salvar_leitura   #se a entrada é menor que 65 nao é maiuscula
-  li $t3, 90
-  bgt $t2, $t3, salvar_leitura  #se a entrada é maior que 90 nao é maiscula
-  addi $t2, $t2, 32            #se a entrada é maiuscula, se converte para minuscula
-  
-  salvar_leitura:
-      sw $t2, tecla
-      li $v0, 1
-      add $v1, $t2, $zero 
-      jr $ra
-  
-  entrada_vazia:
-      sw $zero, tecla
-      li $v0, 0
-      add $v1,$zero, $zero
-      jr $ra
+    sw   $zero, cmd_mover            # zera os pedidos do quadro
+    sw   $zero, cmd_tiro
+    sw   $zero, cmd_pausa
+    sw   $zero, cmd_menu
+
+    lui  $t0, 0xffff
+    li   $t4, MAX_TECLAS             # teto de seguranca
+
+le_loop:
+    beqz $t4, le_fim
+    lw   $t1, 0($t0)
+    andi $t1, $t1, 1
+    beqz $t1, le_fim                 # fila vazia
+    lw   $t2, 4($t0)
+    addi $t4, $t4, -1
+
+    li   $t3, 65                     # normaliza maiuscula
+    blt  $t2, $t3, le_testa
+    li   $t3, 90
+    bgt  $t2, $t3, le_testa
+    addi $t2, $t2, 32
+
+le_testa:
+    li   $t3, TECLA_A
+    bne  $t2, $t3, le_testa_d
+    li   $t5, -1
+    sw   $t5, cmd_mover
+    j    le_loop
+
+le_testa_d:
+    li   $t3, TECLA_D
+    bne  $t2, $t3, le_testa_espaco
+    li   $t5, 1
+    sw   $t5, cmd_mover
+    j    le_loop
+
+le_testa_espaco:
+    li   $t3, TECLA_ESPACO
+    bne  $t2, $t3, le_testa_p
+    li   $t5, 1
+    sw   $t5, cmd_tiro
+    j    le_loop
+
+le_testa_p:
+    li   $t3, TECLA_P
+    bne  $t2, $t3, le_testa_enter
+    li   $t5, 1
+    sw   $t5, cmd_pausa
+    j    le_loop
+
+le_testa_enter:
+    li   $t3, TECLA_ENTER
+    bne  $t2, $t3, le_loop           # tecla desconhecida: ignora
+    li   $t5, 1
+    sw   $t5, cmd_menu
+    j    le_loop
+
+le_fim:
+    jr   $ra
 #-------------------------------------------------------------------
 #ler_entrada: salva entrada em "tecla", salva 0 em tecla c.c.
 #		se houve leitura $v0 =1, 0 c.c.
 # 		v1 retorna a leitura
 #-------------------------------------------------------------------
-
-limpar_buffer:
+limpar_buffer_teclado:
   lui $t0, 0xffff
-  
+  li  $t4, MAX_TECLAS
   lb_loop:
+      beqz $t4, lb_fim
       lw $t1, 0($t0)
-      andi $t1,$t1,1 
+      andi $t1, $t1, 1
       beqz $t1, lb_fim
-      lw $t1, 4($t0) #le e descarta
+      lw $t1, 4($t0)       # le e descarta
+      addi $t4, $t4, -1
       j lb_loop
-      
-  lb_fim: 
-     sw $zero, tecla
+
+  lb_fim:
+     sw $zero, cmd_mover
+     sw $zero, cmd_tiro
+     sw $zero, cmd_pausa
+     sw $zero, cmd_menu
      jr $ra
-  
       
 #--------------------------------------------------------------------
 # terminar execucao
