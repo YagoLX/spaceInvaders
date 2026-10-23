@@ -64,7 +64,9 @@ tabela_estados: .word est_menu, est_jogo, est_pausa
 #----ENTRADAS------------------------------------------------------
 tecla:        .word 0 
 
-#---ESTADO JOGO---------------------------------------------------
+#-JOGADOR--------------------------------------------------------
+pontos: .word 0
+vidas:  .word 5
 nave_x:   .word 30 #LARG/2
 
 #---INIMIGOS------------------------------------------------------
@@ -284,6 +286,7 @@ est_jogo:
       jal  mover_nave
       jal mover_tiro_jogador
       jal mover_grupo_ini
+      jal  colisao_tiro_inimigos
 
     jogo_desenha:
       li   $a2, PRETO
@@ -598,6 +601,7 @@ desenhar_inimigos:
     addi $sp, $sp, 20
     jr   $ra
     
+    
 #-------------------------------------------------------------------
 # desenhar_inimigo — pinta um inimigo em (x, y)
 #   $a0 = x, $a1 = y, $a2 = cor
@@ -656,6 +660,71 @@ desenhar_inimigo:
     addi $sp, $sp, 16
     jr   $ra
 
+
+#-------------------------------------------------------------------
+# colisao_tiro_inimigos — tiro do jogador contra os inimigos vivos
+#
+#   Teste AABB: o tiro (1x1) esta dentro do retangulo do inimigo
+#   (3x3) quando cai no intervalo nos DOIS eixos.
+#
+#   Posicao absoluta do inimigo = grupo_ini_x + col_rel
+#                                 grupo_ini_y + lin_rel
+#
+#   Ao acertar: mata, apaga o tiro, soma ponto, recalcula os limites
+#   e encerra o laco — um tiro acerta um inimigo so.
+#-------------------------------------------------------------------
+colisao_tiro_inimigos:
+    addi $sp, $sp, -4
+    sw   $ra, 0($sp)
+
+    lw   $t0, ha_tiro_jogador
+    beqz $t0, cti_fim             # sem tiro, nada a testar
+
+    lw   $t8, tiro_jogador_x
+    lw   $t9, tiro_jogador_y
+    lw   $t6, grupo_ini_x
+    lw   $t7, grupo_ini_y
+
+    la   $t0, inimigos
+    li   $t1, N_INIMIGOS
+
+cti_loop:
+    lw   $t2, 8($t0)              # vivo?
+    beqz $t2, cti_prox
+
+    lw   $t2, 0($t0)              # col_rel
+    add  $t2, $t6, $t2            # x do inimigo
+    lw   $t3, 4($t0)              # lin_rel
+    add  $t3, $t7, $t3            # y do inimigo
+
+    blt  $t8, $t2, cti_prox       # tiro a esquerda
+    addi $t4, $t2, INI_LARGURA
+    addi $t4, $t4, -1             # borda direita
+    bgt  $t8, $t4, cti_prox       # tiro a direita
+
+    blt  $t9, $t3, cti_prox       # tiro acima
+    addi $t4, $t3, INI_ALTURA
+    addi $t4, $t4, -1             # borda de baixo
+    bgt  $t9, $t4, cti_prox       # tiro abaixo
+
+    # --- acertou ---
+    sw   $zero, 8($t0)            # inimigo morre
+    sw   $zero, ha_tiro_jogador   # o tiro some
+    lw   $t2, pontos
+    addi $t2, $t2, 1
+    sw   $t2, pontos
+    jal  recalcular_limites       # invariante do cache
+    j    cti_fim                  # um tiro acerta um inimigo so
+
+cti_prox:
+    addi $t0, $t0, 12
+    addi $t1, $t1, -1
+    bnez $t1, cti_loop
+
+cti_fim:
+    lw   $ra, 0($sp)
+    addi $sp, $sp, 4
+    jr   $ra
 #--------------------------------------------------------------------
 # esperar: faz o frame esperar o tempo de um frame antes de prosseguir
 #--------------------------------------------------------------------
