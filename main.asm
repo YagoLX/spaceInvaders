@@ -1,10 +1,10 @@
 #----CONFIGURACOES BITMAP DISPLAY------------------------------------
-# 8,8 256, 512, 0x10040000(heap)
+# 8,8 512, 512, 0x10040000(heap)
 
 # ---TELA------------------------------------------------------------
-.eqv LARG       32
+.eqv LARG       64
 .eqv ALT        64
-.eqv NPIX       2048            # LARG * ALT
+.eqv NPIX       4096           # LARG * ALT
 .eqv BASE       0x10040000      # heap
 
 .eqv MS_QUADRO  50              #um quadro dura 50 ms
@@ -39,8 +39,17 @@
 .eqv MAX_TECLAS   64
 #--AUXILIARES PARA NAVE--------------------------------------------
 .eqv NAVE_Y 60
-.eqv X_MAX_NAVE 29 #LARGURA - 3 (largura da nave)
+.eqv X_MAX_NAVE 61 #LARGURA - 3 (largura da nave)
 .eqv TIRO_Y_INI 58
+
+#-AUXILIARES PARA INIMIGOS----------------------------------------
+.eqv INI_ALTURA       3 #ALTURA DO INIMIGO
+.eqv INI_LARGURA      3 #LARGURA DO INIMIGO
+.eqv INI_Y_BASE       8 # LINHAS 0-7 para pontos e vidas
+.eqv GRUPO_X_MIN      0 #
+.eqv GRUPO_X_MAX      29 # LARG - 35
+.eqv GRUPO_DIVISOR    3 # move a cada 4 quadros
+.eqv N_INIMIGOS       20
 
 
 .data
@@ -56,12 +65,26 @@ tabela_estados: .word est_menu, est_jogo, est_pausa
 tecla:        .word 0 
 
 #---ESTADO JOGO---------------------------------------------------
-nave_x:   .word 16 #LARG/2
+nave_x:   .word 30 #LARG/2
+
+#---INIMIGOS------------------------------------------------------
+grupo_ini_x:   .word 14
+grupo_ini_y:   .word INI_Y_BASE
+grupo_x_min:   .word 0
+grupo_x_max:   .word 29
+grupo_ini_dir: .word 1 
 
 #---TIRO DO JOGADOR-----------------------------------------------
 ha_tiro_jogador:  .word 0
 tiro_jogador_x:   .word 0
 tiro_jogador_y:   .word 0
+
+#Inimigo é representado no vetor por: coluna relativa ao bloco
+# linha relativa ao bloco e se esta vivo
+inimigos:  .word  0,0,1,   8,0,1,  16,0,1,  24,0,1,  32,0,1
+           .word  0,4,1,   8,4,1,  16,4,1,  24,4,1,  32,4,1
+           .word  0,8,1,   8,8,1,  16,8,1,  24,8,1,  32,8,1
+           .word  0,12,1,  8,12,1, 16,12,1, 24,12,1, 32,12,1
 
 #----ENTRADAS------------------------------------------------------
 # Permite mais de uma acao no mesmo quadro
@@ -75,7 +98,7 @@ msg_erro_estado: .asciiz "ERRO: estado invalido"
 
 #---DUPLA BUFFERIZACAO---------------------------------------------
 .align 2
-buffer_tela: .space 8192 #Numero de Pixels * 4
+buffer_tela: .space 16384 #Numero de Pixels * 4
 
 .text
 main: 
@@ -147,7 +170,7 @@ pintar:
     li    $t7, ALT   
     bge   $a1, $t7, pintar_fim    # y < ALT 
 
-    sll   $t8, $a1, 5           # y * LARG
+    sll   $t8, $a1, 6           # y * LARG
     add   $t8, $t8, $a0         # + x
     sll   $t8, $t8, 2           # * 4 bytes
     la    $t9, buffer_tela         
@@ -229,6 +252,7 @@ est_menu:
     menu_corpo:
       lw   $t0, cmd_tiro          # Espaco comeca o jogo
       beqz $t0, menu_fim
+      jal jogo_reset
       li   $a0, E_JOGO
       jal  mudar_estado
 
@@ -259,11 +283,13 @@ est_jogo:
     jogo_atualiza:
       jal  mover_nave
       jal mover_tiro_jogador
+      jal mover_grupo_ini
 
     jogo_desenha:
       li   $a2, PRETO
-      jal  pintar_tela             # limpa o buffer
-      jal  desenhar_nave
+      jal  pintar_tela             # limpa o buffer da tela
+      jal desenhar_inimigos
+      jal desenhar_nave
       jal desenhar_tiro_jogador
 
     jogo_fim:
@@ -307,6 +333,45 @@ mudar_estado:
     lw $ra, 0($sp)
     addi $sp, $sp, 4
     jr $ra 
+    
+#-------------------------------------------------------------------
+# jogo_reset — devolve o jogo ao estado inicial
+#
+#   Chamado pela TRANSICAO menu -> jogo, nunca pela entrada do estado:
+#   E_JOGO tambem e alcancado vindo da pausa, e ali nao se reinicia.
+#-------------------------------------------------------------------
+jogo_reset:
+    addi $sp, $sp, -4
+    sw   $ra, 0($sp)
+
+    # --- nave e tiro ---
+    li   $t0, 30
+    sw   $t0, nave_x
+    sw   $zero, ha_tiro_jogador
+
+    # --- bloco de inimigos ---
+    li   $t0, 14
+    sw   $t0, grupo_ini_x
+    li   $t0, INI_Y_BASE
+    sw   $t0, grupo_ini_y
+    li   $t0, 1
+    sw   $t0, grupo_ini_dir
+
+    # --- revive todos os inimigos ---
+    la   $t1, inimigos
+    li   $t2, N_INIMIGOS
+    li   $t3, 1
+jr_loop:
+    sw   $t3, 8($t1)             # campo 'vivo'
+    addi $t1, $t1, 12
+    addi $t2, $t2, -1
+    bnez $t2, jr_loop
+
+    jal  recalcular_limites      # o cache depende de quem esta vivo
+
+    lw   $ra, 0($sp)
+    addi $sp, $sp, 4
+    jr   $ra
     
 #---FIM ESTADOS-----------------------------------------------------
 
@@ -361,7 +426,6 @@ desenhar_nave:
     addi $sp, $sp, 4
     jr   $ra
     
-    
 #-------------------------------------------------------------------
 # mover_tiro_jogador
 #   Se nao ha tiro, ESPACO dispara. Se ha, ele sobe e some ao sair.
@@ -414,6 +478,182 @@ desenhar_tiro_jogador:
 dtj_fim:
     lw   $ra, 0($sp)
     addi $sp, $sp, 4
+    jr   $ra
+    
+#---INIMIGOS---------------------------------------------------------
+
+#-------------------------------------------------------------------
+# recalcular_limites — atualiza grupo_x_min e grupo_x_max
+#
+#   Varre os inimigos vivos procurando o menor e o maior col_rel.
+#   O bloco pode ir ate onde o inimigo da ponta encoste na borda.
+#
+#   CHAMAR SEMPRE QUE: um inimigo morrer, ou o jogo for reiniciado
+#-------------------------------------------------------------------
+recalcular_limites:
+    la   $t0, inimigos
+    li   $t1, N_INIMIGOS
+    li   $t2, 9999                   # menor col_rel
+    li   $t3, -1                     # maior col_rel
+
+    rl_loop:
+      lw   $t4, 8($t0)                 # vivo?
+      beqz $t4, rl_prox
+      lw   $t4, 0($t0)                 # col_rel
+      bge  $t4, $t2, rl_testa_max
+      add $t2, $zero, $t4
+
+    rl_testa_max:
+      ble  $t4, $t3, rl_prox
+      move $t3, $t4
+
+    rl_prox:
+      addi $t0, $t0, 12
+      addi $t1, $t1, -1
+      bne $t1, $zero,rl_loop
+
+      bltz $t3, rl_vazio               # nenhum vivo: congela onde esta
+
+      sub  $t5, $zero, $t2             # x_min = -menor_col
+      sw   $t5, grupo_x_min
+
+      li   $t5, LARG
+      addi $t5, $t5, -INI_LARGURA      # 61
+      sub  $t5, $t5, $t3               # x_max = 61 - maior_col
+      sw   $t5, grupo_x_max
+      jr   $ra
+
+    rl_vazio:
+      lw   $t5, grupo_ini_x
+      sw   $t5, grupo_x_min
+      sw   $t5, grupo_x_max
+      jr   $ra
+      
+#-------------------------------------------------------------------
+# mover_grupo_ini — oscila o bloco inteiro, a cada 4 quadros
+#   Le os limites do cache; nao os recalcula.
+#-------------------------------------------------------------------
+mover_grupo_ini:
+    lw   $t0, quadros
+    andi $t0, $t0, GRUPO_DIVISOR
+    bnez $t0, mgi_fim                # so nos quadros multiplos de 4
+
+    lw   $t1, grupo_ini_x
+    lw   $t2, grupo_ini_dir
+    add  $t1, $t1, $t2
+
+    lw   $t3, grupo_x_min
+    bgt  $t1, $t3, mgi_testa_max
+    move $t1, $t3                    # bateu na esquerda
+    li   $t2, 1
+    j    mgi_grava
+
+  mgi_testa_max:
+    lw   $t3, grupo_x_max
+    blt  $t1, $t3, mgi_grava
+    move $t1, $t3                    # bateu na direita
+    li   $t2, -1
+
+  mgi_grava:
+    sw   $t1, grupo_ini_x
+    sw   $t2, grupo_ini_dir
+  mgi_fim:
+    jr   $ra
+  
+  
+desenhar_inimigos:
+    addi $sp, $sp, -20
+    sw   $ra, 0($sp)
+    sw   $s0, 4($sp)
+    sw   $s1, 8($sp)
+    sw   $s2, 12($sp)
+    sw   $s3, 16($sp)
+
+    la   $s0, inimigos
+    li   $s1, N_INIMIGOS
+    lw   $s2, grupo_ini_x
+    lw   $s3, grupo_ini_y
+
+    din_loop:
+      lw   $t0, 8($s0)
+      beqz $t0, din_prox
+
+      lw   $t0, 0($s0)
+      add  $a0, $s2, $t0               # x = grupo_x + col_rel
+      lw   $t0, 4($s0)
+      add  $a1, $s3, $t0               # y = grupo_y + lin_rel
+      li   $a2, VERMELHO
+      jal  desenhar_inimigo
+
+  din_prox:
+    addi $s0, $s0, 12
+    addi $s1, $s1, -1
+    bnez $s1, din_loop
+
+    lw   $ra, 0($sp)
+    lw   $s0, 4($sp)
+    lw   $s1, 8($sp)
+    lw   $s2, 12($sp)
+    lw   $s3, 16($sp)
+    addi $sp, $sp, 20
+    jr   $ra
+    
+#-------------------------------------------------------------------
+# desenhar_inimigo — pinta um inimigo em (x, y)
+#   $a0 = x, $a1 = y, $a2 = cor
+#   Cor como argumento permite usar a mesma rotina para desenhar e
+#   para apagar, se um dia for preciso.
+#
+#     #.#
+#     ###
+#     .#.
+#   Usa $s0-$s2 porque 'pintar' destroi $a0-$a2 a cada chamada.
+#-------------------------------------------------------------------
+desenhar_inimigo:
+    addi $sp, $sp, -16
+    sw   $ra, 0($sp)
+    sw   $s0, 4($sp)
+    sw   $s1, 8($sp)
+    sw   $s2, 12($sp)
+    move $s0, $a0                # x
+    move $s1, $a1                # y
+    move $s2, $a2                # cor
+
+    move $a0, $s0                # (0,0)
+    move $a1, $s1
+    move $a2, $s2
+    jal  pintar
+
+    addi $a0, $s0, 2             # (2,0)
+    move $a1, $s1
+    move $a2, $s2
+    jal  pintar
+
+    move $a0, $s0                # (0,1)
+    addi $a1, $s1, 1
+    move $a2, $s2
+    jal  pintar
+
+    addi $a0, $s0, 1             # (1,1)
+    addi $a1, $s1, 1
+    move $a2, $s2
+    jal  pintar
+
+    addi $a0, $s0, 2             # (2,1)
+    addi $a1, $s1, 1
+    move $a2, $s2
+    jal  pintar
+
+    addi $a0, $s0, 1             # (1,2)
+    addi $a1, $s1, 2
+    move $a2, $s2
+    jal  pintar
+
+    lw   $ra, 0($sp)
+    lw   $s0, 4($sp)
+    lw   $s1, 8($sp)
+    lw   $s2, 12($sp)
+    addi $sp, $sp, 16
     jr   $ra
 
 #--------------------------------------------------------------------
