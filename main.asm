@@ -213,6 +213,15 @@ s_sair:     .word f_S, f_A, f_I, f_R, 0
 s_vitoria: .word f_V, f_I, f_T, f_O, f_R, f_I, f_A, 0
 s_derrota: .word f_D, f_E, f_R, f_R, f_O, f_T, f_A, 0
 
+#---SONS--------------------------------------------------------------
+# cada som: altura MIDI (60 = do central), duracao (ms),
+#           instrumento General MIDI (0-127), volume (0-127)
+som_tiro:     .word 72,  50,  13, 60   # xilofone: "tic" curto e discreto
+som_explosao: .word 40, 200, 127, 110  # instrumento "gunshot", grave
+som_dano:     .word 45, 300,  81, 120  # dente-de-serra grave e longo
+som_jogar:    .word 76, 120,  80, 90
+som_sair:     .word 71, 120,  80, 90   # 5 semitons abaixo de JOGAR
+
 #---MENSAGENS-------------------------------------------------------
 msg_erro_estado: .asciiz "ERRO: estado invalido"
 msg_vitoria:     .asciiz "VITORIA!\n"
@@ -669,10 +678,23 @@ est_menu:
 
     menu_testa_baixo:
       lw   $t0, cmd_baixo
-      beqz $t0, menu_testa_espaco
+      beqz $t0, menu_som
       lw   $t1, menu_sel
       xori $t1, $t1, 1
       sw   $t1, menu_sel
+
+    menu_som:                     # W ou S: som da opcao que ficou
+      lw   $t0, cmd_cima
+      lw   $t1, cmd_baixo
+      or   $t0, $t0, $t1
+      beqz $t0, menu_testa_espaco
+      la   $a0, som_jogar
+      lw   $t0, menu_sel
+      li   $t1, MENU_SAIR
+      bne  $t0, $t1, menu_som_ok
+      la   $a0, som_sair          # SAIR e mais grave
+    menu_som_ok:
+      jal  tocar_som
 
     menu_testa_espaco:
       lw   $t0, cmd_tiro          # Espaco confirma
@@ -1077,8 +1099,12 @@ desenhar_nave:
 # mover_tiro_jogador
 #   Se nao ha tiro, ESPACO dispara. Se ha, ele sobe e some ao sair.
 #   A flag 'ha_tiro_jogador' sozinha impoe a regra de um tiro por vez
+#   Toca som_tiro quando o tiro nasce.
 #-------------------------------------------------------------------
 mover_tiro_jogador:
+    addi $sp, $sp, -4
+    sw   $ra, 0($sp)
+
     lw   $t0, ha_tiro_jogador
     bnez $t0, mtj_existe
 
@@ -1092,6 +1118,8 @@ mover_tiro_jogador:
     sw   $t3, tiro_jogador_y
     li   $t3, 1
     sw   $t3, ha_tiro_jogador
+    la   $a0, som_tiro
+    jal  tocar_som
     j    mtj_fim
 
     # --- existe: sobe uma linha ---
@@ -1105,6 +1133,8 @@ mtj_grava:
     sw   $t1, tiro_jogador_y
 
 mtj_fim:
+    lw   $ra, 0($sp)
+    addi $sp, $sp, 4
     jr   $ra
 
 #-------------------------------------------------------------------
@@ -1134,8 +1164,14 @@ dtj_fim:
 #     corpo: (nave_x .. nave_x+2, NAVE_Y)
 #     bico:  (nave_x+1, NAVE_Y-1)
 #   Percorre TODOS os tiros: varios podem acertar no mesmo quadro.
+#   Conta os acertos em $t5 e toca som_dano uma vez, depois do laco:
+#   chamar tocar_som la dentro destruiria os $t do laco.
 #-------------------------------------------------------------------
 colisao_tiros_ini_nave:
+    addi $sp, $sp, -4
+    sw   $ra, 0($sp)
+
+    li   $t5, 0                   # acertos neste quadro
     lw   $t6, nave_x
     addi $t7, $t6, 2              # borda direita da nave
     li   $t8, NAVE_Y
@@ -1161,11 +1197,20 @@ ctn_loop:
     lw   $t4, vidas
     addi $t4, $t4, -1
     sw   $t4, vidas
+    addi $t5, $t5, 1
 
 ctn_prox:
     addi $t0, $t0, 12
     addi $t1, $t1, -1
     bnez $t1, ctn_loop
+
+    beqz $t5, ctn_fim
+    la   $a0, som_dano
+    jal  tocar_som
+
+ctn_fim:
+    lw   $ra, 0($sp)
+    addi $sp, $sp, 4
     jr   $ra
 #---INIMIGOS---------------------------------------------------------
 
@@ -1397,6 +1442,8 @@ cti_loop:
     lw   $t2, pontos
     addi $t2, $t2, 1
     sw   $t2, pontos
+    la   $a0, som_explosao
+    jal  tocar_som
     jal  recalcular_limites       # invariante do cache
     j    cti_fim                  # um tiro acerta um inimigo so
 
@@ -1588,6 +1635,22 @@ ati_grava:
     addi $sp, $sp, 4
     jr   $ra
 
+
+#-------------------------------------------------------------------
+# tocar_som — toca uma nota MIDI sem bloquear (syscall 31)
+#   $a0 = endereco do registro: altura, duracao, instrumento, volume
+#   Retorna na hora; o som toca enquanto o jogo segue.
+#   Rotina folha.
+#-------------------------------------------------------------------
+tocar_som:
+    move $t0, $a0
+    lw   $a0, 0($t0)
+    lw   $a1, 4($t0)
+    lw   $a2, 8($t0)
+    lw   $a3, 12($t0)
+    li   $v0, 31
+    syscall
+    jr   $ra
 
 #--------------------------------------------------------------------
 # esperar: faz o frame esperar o tempo de um frame antes de prosseguir
