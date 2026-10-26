@@ -57,6 +57,8 @@
 .eqv GRUPO_X_MAX      29 # LARG - 35
 .eqv GRUPO_DIVISOR    3 # move a cada 4 quadros
 .eqv N_INIMIGOS       20
+.eqv INI_DESCIDA       3   # linhas que o grupo desce a cada batida na direita
+.eqv INI_Y_LIMITE     59   # NAVE_Y - 1: linha do bico; inimigo aqui = derrota
 
 #-AUXILIARES PARA TIROS INIMIGOS----------------------------------
 .eqv MAX_TIROS_INI    6    # tiros inimigos simultaneos na tela
@@ -125,6 +127,7 @@ grupo_ini_x:   .word 14
 grupo_ini_y:   .word INI_Y_BASE
 grupo_x_min:   .word 0
 grupo_x_max:   .word 29
+grupo_lin_max: .word 12   # maior lin_rel entre os vivos (cache)
 grupo_ini_dir: .word 1 
 
 #---TIROS DOS INIMIGOS--------------------------------------------
@@ -999,8 +1002,11 @@ jr_tiros:
     
 #-------------------------------------------------------------------
 # checar_fim_jogo — decide se a partida acabou
-#   Vitoria: pontos >= META_PONTOS. Derrota: vidas <= 0.
-#   Se as duas ocorrem no mesmo quadro, vitoria tem prioridade.
+#   Vitoria: pontos >= META_PONTOS.
+#   Derrota: vidas <= 0, ou invasao — a borda de baixo do inimigo
+#   vivo mais baixo (grupo_ini_y + grupo_lin_max + INI_ALTURA - 1)
+#   alcanca INI_Y_LIMITE.
+#   Prioridade no mesmo quadro: vitoria, vidas, invasao.
 #   Imprime o resultado no console (syscall 4) e pede a transicao;
 #   quem espera a tecla e o estado seguinte (regra 1: sem laco aqui).
 #-------------------------------------------------------------------
@@ -1020,7 +1026,14 @@ checar_fim_jogo:
 
 cfj_testa_derrota:
     lw   $t0, vidas
-    bgtz $t0, cfj_fim
+    blez $t0, cfj_derrota
+    lw   $t0, grupo_ini_y            # borda de baixo do inimigo vivo mais baixo,
+    lw   $t1, grupo_lin_max          # mais 1 (evita o -1 de INI_ALTURA-1)
+    add  $t0, $t0, $t1
+    addi $t0, $t0, INI_ALTURA
+    li   $t1, INI_Y_LIMITE
+    ble  $t0, $t1, cfj_fim           # ainda acima da nave
+cfj_derrota:
     la   $a0, msg_derrota
     li   $v0, 4
     syscall
@@ -1227,6 +1240,8 @@ ctn_fim:
 #
 #   Varre os inimigos vivos procurando o menor e o maior col_rel.
 #   O bloco pode ir ate onde o inimigo da ponta encoste na borda.
+#   Guarda tambem o maior lin_rel (grupo_lin_max): a fileira viva
+#   mais baixa, usada pela derrota por invasao.
 #
 #   CHAMAR SEMPRE QUE: um inimigo morrer, ou o jogo for reiniciado
 #-------------------------------------------------------------------
@@ -1235,10 +1250,16 @@ recalcular_limites:
     li   $t1, N_INIMIGOS
     li   $t2, 9999                   # menor col_rel
     li   $t3, -1                     # maior col_rel
+    li   $t6, -1                     # maior lin_rel
 
     rl_loop:
       lw   $t4, 8($t0)                 # vivo?
       beqz $t4, rl_prox
+      lw   $t4, 4($t0)                 # lin_rel
+      ble  $t4, $t6, rl_col
+      move $t6, $t4
+
+    rl_col:
       lw   $t4, 0($t0)                 # col_rel
       bge  $t4, $t2, rl_testa_max
       add $t2, $zero, $t4
@@ -1252,6 +1273,7 @@ recalcular_limites:
       addi $t1, $t1, -1
       bne $t1, $zero,rl_loop
 
+      sw   $t6, grupo_lin_max          # antes do teste de 'nenhum vivo'
       bltz $t3, rl_vazio               # nenhum vivo: congela onde esta
 
       sub  $t5, $zero, $t2             # x_min = -menor_col
@@ -1272,6 +1294,7 @@ recalcular_limites:
 #-------------------------------------------------------------------
 # mover_grupo_ini — oscila o bloco inteiro, a cada 4 quadros
 #   Le os limites do cache; nao os recalcula.
+#   Ao bater na borda direita, desce INI_DESCIDA linhas.
 #-------------------------------------------------------------------
 mover_grupo_ini:
     lw   $t0, quadros
@@ -1293,6 +1316,9 @@ mover_grupo_ini:
     blt  $t1, $t3, mgi_grava
     move $t1, $t3                    # bateu na direita
     li   $t2, -1
+    lw   $t4, grupo_ini_y            # e avanca em direcao ao jogador
+    addi $t4, $t4, INI_DESCIDA
+    sw   $t4, grupo_ini_y
 
   mgi_grava:
     sw   $t1, grupo_ini_x
