@@ -46,6 +46,8 @@
 .eqv NAVE_Y 60
 .eqv X_MAX_NAVE 61 #LARGURA - 3 (largura da nave)
 .eqv TIRO_Y_INI 58
+.eqv NAVE_PASSO 2   # colunas por quadro
+.eqv TIRO_PASSO 2   # linhas por quadro; NAO pode passar de INI_ALTURA
 
 #-AUXILIARES PARA INIMIGOS----------------------------------------
 .eqv INI_ALTURA       3 #ALTURA DO INIMIGO
@@ -57,8 +59,8 @@
 .eqv N_INIMIGOS       20
 
 #-AUXILIARES PARA TIROS INIMIGOS----------------------------------
-.eqv MAX_TIROS_INI    4    # tiros inimigos simultaneos na tela
-.eqv CADENCIA_INI    20    # quadros entre disparos (valor inicial)
+.eqv MAX_TIROS_INI    6    # tiros inimigos simultaneos na tela
+.eqv CADENCIA_INI    10    # quadros entre disparos (valor inicial)
 
 #-AUXILIARES PARA HUD---------------------------------------------
 .eqv VIDA_X        1
@@ -127,7 +129,8 @@ grupo_ini_dir: .word 1
 
 #---TIROS DOS INIMIGOS--------------------------------------------
 # cada tiro ocupa 12 bytes: x, y, ativo
-tiros_ini: .word 0,0,0,  0,0,0,  0,0,0,  0,0,0
+# o numero de slots TEM que ser igual a MAX_TIROS_INI
+tiros_ini: .word 0,0,0,  0,0,0,  0,0,0,  0,0,0,  0,0,0,  0,0,0
 
 # Cadencia em VARIAVEL, nao constante: permite dificuldade
 # progressiva depois, bastando diminuir este valor.
@@ -1033,13 +1036,18 @@ cfj_fim:
 
 #---NAVE------------------------------------------------------------
 #-------------------------------------------------------------------
-# mover_nave: le TECLA, atualiza nave_x ->cuidado bordas
+# mover_nave — anda NAVE_PASSO colunas na direcao de cmd_mover
+#   nave_x fica sempre em [0, X_MAX_NAVE]: o passo pode passar da
+#   borda (ex.: 60 + 2 = 62), entao o valor e CORTADO no limite,
+#   nao descartado — a nave encosta na parede em vez de parar antes.
 #-------------------------------------------------------------------
 mover_nave:
     lw   $t0, cmd_mover
     beqz $t0, mn_fim                 # parado
     lw   $t1, nave_x
-    add  $t1, $t1, $t0               # soma -1 ou +1 direto
+    li   $t2, NAVE_PASSO
+    mul  $t0, $t0, $t2               # -1/+1 vira -PASSO/+PASSO
+    add  $t1, $t1, $t0
 
     bgez $t1, mn_testa_max
     li   $t1, 0
@@ -1122,10 +1130,10 @@ mover_tiro_jogador:
     jal  tocar_som
     j    mtj_fim
 
-    # --- existe: sobe uma linha ---
+    # --- existe: sobe TIRO_PASSO linhas ---
 mtj_existe:
     lw   $t1, tiro_jogador_y
-    addi $t1, $t1, -1
+    addi $t1, $t1, -TIRO_PASSO
     bgez $t1, mtj_grava
     sw   $zero, ha_tiro_jogador  # saiu pelo topo
     j    mtj_fim
