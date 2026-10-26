@@ -26,6 +26,7 @@
 .eqv AMARELO      0x00FFFF00
 .eqv CIANO        0x0000FFFF
 .eqv ROSA         0x00FF00FF
+.eqv LARANJA      0x00FF8A3D
 
  
  .eqv COR_TIRO_J AMARELO
@@ -36,6 +37,8 @@
 .eqv TECLA_A      97
 .eqv TECLA_D      100
 .eqv TECLA_P      112
+.eqv TECLA_S      115
+.eqv TECLA_W      119
 .eqv MAX_TECLAS   64
 #--AUXILIARES PARA NAVE--------------------------------------------
 .eqv NAVE_Y 60
@@ -72,6 +75,20 @@
 .eqv PAUSE_X      22    # 5 letras x 4 = 19 colunas, centralizado
 .eqv PAUSE_Y      30
 
+#-AUXILIARES PARA MENU--------------------------------------------
+.eqv EEA_X          20    # "EEA-25":   6 letras x 4 = 23 colunas
+.eqv EEA_Y           2
+.eqv INVADERS_X     16    # "INVADERS": 8 letras x 4 = 31 colunas
+.eqv INVADERS_Y      8
+.eqv JOGAR_X        26    # "JOGAR":    5 letras x 4 = 19 colunas
+.eqv JOGAR_Y        20
+.eqv SAIR_X         28    # "SAIR":     4 letras x 4 = 15 colunas
+.eqv SAIR_Y         26
+.eqv MENU_JOGAR      0    # valores de menu_sel
+.eqv MENU_SAIR       1
+.eqv CURSOR_DX       4    # nave fica 4 colunas a esquerda da opcao
+.eqv CURSOR_DY       2    # corpo da nave na linha do meio do glifo
+
 .data
 quadros: .word 0
 
@@ -80,6 +97,9 @@ estado:         .word E_MENU
 estado_novo:    .word 1 # 1 se tiver acabado de trocar de estado e 0 c.c
 quadros_est:    .word 0 #quadros desde que entrou no estado
 tabela_estados: .word est_menu, est_jogo, est_pausa
+
+#---MENU-------------------------------------------------------------
+menu_sel:       .word MENU_JOGAR  # opcao destacada: MENU_JOGAR ou MENU_SAIR
 
 #----ENTRADAS------------------------------------------------------
 tecla:        .word 0 
@@ -123,6 +143,8 @@ cmd_mover:   .word 0    # -1 esquerda, 0 parado, +1 direita
 cmd_tiro:    .word 0    # 1 se ESPACO foi apertado neste quadro
 cmd_pausa:   .word 0    # 1 se P foi apertado
 cmd_menu:    .word 0    # 1 se ENTER foi apertado
+cmd_cima:    .word 0    # 1 se W foi apertado
+cmd_baixo:   .word 0    # 1 se S foi apertado
 
 #---FONTE 3x5-----------------------------------------------------
 # Cada caractere sao 5 words; cada word e uma linha de 3 bits,
@@ -133,14 +155,25 @@ f_A: .word 2,5,7,5,5        # .#.  #.#  ###  #.#  #.#
 f_U: .word 5,5,5,5,2        # #.#  #.#  #.#  #.#  .#.
 f_S: .word 3,4,2,1,6        # .##  #..  .#.  ..#  ##.
 f_E: .word 7,4,6,4,7        # ###  #..  ##.  #..  ###
+f_I: .word 7,2,2,2,7        # ###  .#.  .#.  .#.  ###
+f_N: .word 5,7,7,5,5        # #.#  ###  ###  #.#  #.#
+f_V: .word 5,5,5,5,2        # #.#  #.#  #.#  #.#  .#.
+f_D: .word 6,5,5,5,6        # ##.  #.#  #.#  #.#  ##.
+f_R: .word 6,5,6,5,5        # ##.  #.#  ##.  #.#  #.#
+f_J: .word 1,1,1,5,2        # ..#  ..#  ..#  #.#  .#.
+f_O: .word 2,5,5,5,2        # .#.  #.#  #.#  #.#  .#.
+f_G: .word 3,4,5,5,3        # .##  #..  #.#  #.#  .##
+f_HIFEN: .word 0,0,7,0,0    # ...  ...  ###  ...  ...
 
 # os 10 digitos, CONTIGUOS: 5 words cada, 20 bytes de passo
 f_digitos:
   .word 7,5,5,5,7     # 0
   .word 2,6,2,2,7     # 1
+f_2:                  # rotulo dentro da tabela: nao quebra a contiguidade
   .word 7,1,7,4,7     # 2
   .word 7,1,7,1,7     # 3
   .word 5,5,7,1,1     # 4
+f_5:
   .word 7,4,7,1,7     # 5
   .word 7,4,7,5,7     # 6
   .word 7,1,1,1,1     # 7
@@ -150,6 +183,12 @@ f_digitos:
 
 # "PAUSE": lista de ponteiros terminada em 0
 s_pause: .word f_P, f_A, f_U, f_S, f_E, 0
+
+# textos do menu, no mesmo formato
+s_eea25:    .word f_E, f_E, f_A, f_HIFEN, f_2, f_5, 0
+s_invaders: .word f_I, f_N, f_V, f_A, f_D, f_E, f_R, f_S, 0
+s_jogar:    .word f_J, f_O, f_G, f_A, f_R, 0
+s_sair:     .word f_S, f_A, f_I, f_R, 0
 
 #---MENSAGENS-------------------------------------------------------
 msg_erro_estado: .asciiz "ERRO: estado invalido"
@@ -511,6 +550,15 @@ copiar_buffer:
 #---ESTADOS---------------------------------------------------------
 #   recebe a flag estado_novo em $a0
 #------------------------------------------------------------------
+#-------------------------------------------------------------------
+# E_MENU — titulo, duas opcoes e a nave como cursor
+#   W / S alternam menu_sel; Espaco confirma a opcao destacada.
+#   Redesenha tudo a cada quadro, como est_jogo: a opcao destacada
+#   e o cursor dependem de menu_sel, que muda com a entrada.
+#   Posicao do cursor sai SO de menu_sel:
+#     x = JOGAR_X + menu_sel * (SAIR_X - JOGAR_X) - CURSOR_DX
+#     y = JOGAR_Y + menu_sel * (SAIR_Y - JOGAR_Y) + CURSOR_DY
+#-------------------------------------------------------------------
 est_menu:
     addi $sp, $sp, -8
     sw   $ra, 0($sp)
@@ -518,15 +566,84 @@ est_menu:
 
     lw   $t0, 4($sp)
     beqz $t0, menu_corpo
-    li   $a2, AZUL              # bloco de entrada: pinta uma vez quando a flag estado_novo é 1
-    jal  pintar_tela
-    
+    li   $t0, MENU_JOGAR         # bloco de entrada: sempre abre em JOGAR
+    sw   $t0, menu_sel
+
     menu_corpo:
-      lw   $t0, cmd_tiro          # Espaco comeca o jogo
-      beqz $t0, menu_fim
-      jal jogo_reset
+      lw   $t0, cmd_cima          # com 2 opcoes, subir e descer
+      beqz $t0, menu_testa_baixo  # sao a mesma coisa: alternar
+      lw   $t1, menu_sel
+      xori $t1, $t1, 1
+      sw   $t1, menu_sel
+
+    menu_testa_baixo:
+      lw   $t0, cmd_baixo
+      beqz $t0, menu_testa_espaco
+      lw   $t1, menu_sel
+      xori $t1, $t1, 1
+      sw   $t1, menu_sel
+
+    menu_testa_espaco:
+      lw   $t0, cmd_tiro          # Espaco confirma
+      beqz $t0, menu_desenha
+      lw   $t1, menu_sel
+      li   $t2, MENU_SAIR
+      beq  $t1, $t2, terminar_programa   # SAIR: syscall 10, nao volta
+      jal  jogo_reset
       li   $a0, E_JOGO
       jal  mudar_estado
+      j    menu_fim
+
+    menu_desenha:
+      li   $a2, PRETO
+      jal  pintar_tela             # limpa o buffer da tela
+
+      li   $a0, EEA_X              # titulo, linha 1
+      li   $a1, EEA_Y
+      li   $a2, CIANO
+      la   $a3, s_eea25
+      jal  desenhar_texto
+
+      li   $a0, INVADERS_X         # titulo, linha 2
+      li   $a1, INVADERS_Y
+      li   $a2, CIANO
+      la   $a3, s_invaders
+      jal  desenhar_texto
+
+      li   $a2, BRANCO             # JOGAR: laranja se destacada
+      lw   $t0, menu_sel
+      li   $t1, MENU_JOGAR
+      bne  $t0, $t1, menu_jogar_cor_ok
+      li   $a2, LARANJA
+    menu_jogar_cor_ok:
+      li   $a0, JOGAR_X
+      li   $a1, JOGAR_Y
+      la   $a3, s_jogar
+      jal  desenhar_texto
+
+      li   $a2, BRANCO             # SAIR: laranja se destacada
+      lw   $t0, menu_sel
+      li   $t1, MENU_SAIR
+      bne  $t0, $t1, menu_sair_cor_ok
+      li   $a2, LARANJA
+    menu_sair_cor_ok:
+      li   $a0, SAIR_X
+      li   $a1, SAIR_Y
+      la   $a3, s_sair
+      jal  desenhar_texto
+
+      lw   $t0, menu_sel           # cursor
+      li   $t1, SAIR_X
+      addi $t1, $t1, -JOGAR_X      # distancia entre as opcoes em x
+      mul  $t1, $t1, $t0
+      addi $a0, $t1, JOGAR_X
+      addi $a0, $a0, -CURSOR_DX
+      li   $t1, SAIR_Y
+      addi $t1, $t1, -JOGAR_Y      # distancia entre as opcoes em y
+      mul  $t1, $t1, $t0
+      addi $a1, $t1, JOGAR_Y
+      addi $a1, $a1, CURSOR_DY
+      jal  desenhar_nave
 
     menu_fim:
       lw   $ra, 0($sp)
@@ -564,6 +681,8 @@ est_jogo:
       li   $a2, PRETO
       jal  pintar_tela             # limpa o buffer da tela
       jal desenhar_inimigos
+      lw   $a0, nave_x
+      li   $a1, NAVE_Y
       jal desenhar_nave
       jal desenhar_tiro_jogador
       jal desenhar_tiros_ini
@@ -717,32 +836,45 @@ mn_fim:
     jr   $ra
 
 #-----------------------------------------------------------------
-# desenhar_nave: le nave_x, pinta a nave em NAVE_Y
+# desenhar_nave — pinta a nave com o corpo em (x, y)
+#   $a0 = x da celula esquerda do corpo, $a1 = y do corpo
+#
+#     .#.      bico em (x+1, y-1)
+#     ###      corpo em (x..x+2, y)
+#
+#   Usada pelo jogo (nave_x, NAVE_Y) e pelo cursor do menu.
+#   Usa $s0-$s1 porque 'pintar' destroi $a0-$a2 a cada chamada.
 #-----------------------------------------------------------------
 desenhar_nave:
-    addi $sp, $sp, -4
+    addi $sp, $sp, -12
     sw   $ra, 0($sp)
+    sw   $s0, 4($sp)
+    sw   $s1, 8($sp)
+    move $s0, $a0                # x
+    move $s1, $a1                # y
 
+    move $a0, $s0                # corpo: tres celulas
+    move $a1, $s1
     li   $a2, BRANCO
-    li   $a1, NAVE_Y             # corpo: tres celulas
+    jal  pintar
+    addi $a0, $s0, 1
+    move $a1, $s1
+    li   $a2, BRANCO
+    jal  pintar
+    addi $a0, $s0, 2
+    move $a1, $s1
+    li   $a2, BRANCO
+    jal  pintar
 
-    lw   $a0, nave_x
-    jal  pintar
-    lw   $a0, nave_x
-    addi $a0, $a0, 1
-    jal  pintar
-    lw   $a0, nave_x
-    addi $a0, $a0, 2
-    jal  pintar
-
-    li   $a1, NAVE_Y             # bico: uma acima, no centro
-    addi $a1, $a1, -1
-    lw   $a0, nave_x
-    addi $a0, $a0, 1
+    addi $a0, $s0, 1             # bico: uma acima, no centro
+    addi $a1, $s1, -1
+    li   $a2, BRANCO
     jal  pintar
 
     lw   $ra, 0($sp)
-    addi $sp, $sp, 4
+    lw   $s0, 4($sp)
+    lw   $s1, 8($sp)
+    addi $sp, $sp, 12
     jr   $ra
     
 #-------------------------------------------------------------------
@@ -1290,6 +1422,8 @@ ler_entrada:
     sw   $zero, cmd_tiro
     sw   $zero, cmd_pausa
     sw   $zero, cmd_menu
+    sw   $zero, cmd_cima
+    sw   $zero, cmd_baixo
 
     lui  $t0, 0xffff
     li   $t4, MAX_TECLAS             # teto de seguranca
@@ -1338,9 +1472,23 @@ le_testa_p:
 
 le_testa_enter:
     li   $t3, TECLA_ENTER
-    bne  $t2, $t3, le_loop           # tecla desconhecida: ignora
+    bne  $t2, $t3, le_testa_w
     li   $t5, 1
     sw   $t5, cmd_menu
+    j    le_loop
+
+le_testa_w:
+    li   $t3, TECLA_W
+    bne  $t2, $t3, le_testa_s
+    li   $t5, 1
+    sw   $t5, cmd_cima
+    j    le_loop
+
+le_testa_s:
+    li   $t3, TECLA_S
+    bne  $t2, $t3, le_loop           # tecla desconhecida: ignora
+    li   $t5, 1
+    sw   $t5, cmd_baixo
     j    le_loop
 
 le_fim:
@@ -1367,6 +1515,8 @@ limpar_buffer_teclado:
      sw $zero, cmd_tiro
      sw $zero, cmd_pausa
      sw $zero, cmd_menu
+     sw $zero, cmd_cima
+     sw $zero, cmd_baixo
      jr $ra
      
      
