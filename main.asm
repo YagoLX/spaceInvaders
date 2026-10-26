@@ -65,7 +65,7 @@
 .eqv VIDA_Y        2
 .eqv VIDA_PASSO    4
 
-.eqv META_PONTOS  2    # pontos para vencer == N_INIMIGOS
+.eqv META_PONTOS  20    # pontos para vencer == N_INIMIGOS
 .eqv BARRA_X      42    # inicio da barra
 .eqv BARRA_Y       1
 .eqv BARRA_ALT     2    # espessura, em celulas
