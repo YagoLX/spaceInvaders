@@ -55,6 +55,17 @@
 .eqv MAX_TIROS_INI    4    # tiros inimigos simultaneos na tela
 .eqv CADENCIA_INI    20    # quadros entre disparos (valor inicial)
 
+#-AUXILIARES PARA HUD---------------------------------------------
+.eqv VIDA_X       1    # coluna da primeira vida
+.eqv VIDA_Y       2    # linha do corpo das mini-naves
+.eqv VIDA_PASSO   4    # 3 do sprite + 1 de espaco
+
+#-AUXILIARES PARA TEXTO-------------------------------------------
+.eqv CHAR_LARG     3
+.eqv CHAR_ALT      5
+.eqv CHAR_PASSO    4    # 3 do glifo + 1 de espaco
+.eqv PAUSE_X      22    # 5 letras x 4 = 19 colunas, centralizado
+.eqv PAUSE_Y      30
 
 .data
 quadros: .word 0
@@ -107,6 +118,19 @@ cmd_mover:   .word 0    # -1 esquerda, 0 parado, +1 direita
 cmd_tiro:    .word 0    # 1 se ESPACO foi apertado neste quadro
 cmd_pausa:   .word 0    # 1 se P foi apertado
 cmd_menu:    .word 0    # 1 se ENTER foi apertado
+
+#---FONTE 3x5-----------------------------------------------------
+# Cada caractere sao 5 words; cada word e uma linha de 3 bits,
+# do bit 2 (coluna esquerda) ao bit 0 (coluna direita).
+# Tabela: 000=0  001=1  010=2  011=3  100=4  101=5  110=6  111=7
+f_P: .word 6,5,6,4,4        # ##.  #.#  ##.  #..  #..
+f_A: .word 2,5,7,5,5        # .#.  #.#  ###  #.#  #.#
+f_U: .word 5,5,5,5,2        # #.#  #.#  #.#  #.#  .#.
+f_S: .word 3,4,2,1,6        # .##  #..  .#.  ..#  ##.
+f_E: .word 7,4,6,4,7        # ###  #..  ##.  #..  ###
+
+# "PAUSE": lista de ponteiros terminada em 0
+s_pause: .word f_P, f_A, f_U, f_S, f_E, 0
 
 #---MENSAGENS-------------------------------------------------------
 msg_erro_estado: .asciiz "ERRO: estado invalido"
@@ -234,6 +258,106 @@ pintar_tela:
          lw $s0, 4($sp)
          addi $sp, $sp, 8
          jr $ra
+         
+#-------------------------------------------------------------------
+# desenhar_char — pinta um caractere 3x5 da fonte
+#   $a0 = x, $a1 = y, $a2 = cor
+#   $a3 = ponteiro para as 5 words do caractere
+#
+#   Cada word e uma linha; o bit 2 e a coluna da esquerda.
+#   Usa $s0-$s4 porque 'pintar' destroi $a0-$a2; $t0-$t5 ficam
+#   livres para o laco porque 'pintar' so destroi $t7-$t9.
+#-------------------------------------------------------------------
+desenhar_char:
+    addi $sp, $sp, -24
+    sw   $ra, 0($sp)
+    sw   $s0, 4($sp)
+    sw   $s1, 8($sp)
+    sw   $s2, 12($sp)
+    sw   $s3, 16($sp)
+    sw   $s4, 20($sp)
+    move $s0, $a0                # x base
+    move $s1, $a1                # y base
+    move $s2, $a2                # cor
+    move $s3, $a3                # ponteiro
+    li   $s4, 0                  # linha corrente
+
+dc_linha:
+    li   $t0, CHAR_ALT
+    bge  $s4, $t0, dc_fim
+    lw   $t1, 0($s3)             # mascara de 3 bits da linha
+    li   $t2, 0                  # coluna corrente
+
+dc_col:
+    li   $t3, CHAR_LARG
+    bge  $t2, $t3, dc_prox_linha
+    li   $t4, 2
+    sub  $t4, $t4, $t2           # bit 2 = coluna 0
+    srlv $t5, $t1, $t4
+    andi $t5, $t5, 1
+    beqz $t5, dc_prox_col
+
+    add  $a0, $s0, $t2
+    add  $a1, $s1, $s4
+    move $a2, $s2
+    jal  pintar
+
+dc_prox_col:
+    addi $t2, $t2, 1
+    j    dc_col
+
+dc_prox_linha:
+    addi $s3, $s3, 4
+    addi $s4, $s4, 1
+    j    dc_linha
+
+dc_fim:
+    lw   $ra, 0($sp)
+    lw   $s0, 4($sp)
+    lw   $s1, 8($sp)
+    lw   $s2, 12($sp)
+    lw   $s3, 16($sp)
+    lw   $s4, 20($sp)
+    addi $sp, $sp, 24
+    jr   $ra
+    
+#-------------------------------------------------------------------
+# desenhar_texto — escreve uma cadeia de caracteres
+#   $a0 = x, $a1 = y, $a2 = cor
+#   $a3 = lista de ponteiros de caractere terminada por 0
+#-------------------------------------------------------------------
+desenhar_texto:
+    addi $sp, $sp, -20
+    sw   $ra, 0($sp)
+    sw   $s0, 4($sp)
+    sw   $s1, 8($sp)
+    sw   $s2, 12($sp)
+    sw   $s3, 16($sp)
+    move $s0, $a0
+    move $s1, $a1
+    move $s2, $a2
+    move $s3, $a3
+
+dt_loop:
+    lw   $t0, 0($s3)
+    beqz $t0, dt_fim             # sentinela
+    move $a0, $s0
+    move $a1, $s1
+    move $a2, $s2
+    move $a3, $t0
+    jal  desenhar_char
+    addi $s0, $s0, CHAR_PASSO
+    addi $s3, $s3, 4
+    j    dt_loop
+
+dt_fim:
+    lw   $ra, 0($sp)
+    lw   $s0, 4($sp)
+    lw   $s1, 8($sp)
+    lw   $s2, 12($sp)
+    lw   $s3, 16($sp)
+    addi $sp, $sp, 20
+    jr   $ra
 #-----------------------------------------------------------------
 # copiar_buffer: despeja o buffer na memoria da tela
 #-----------------------------------------------------------------
@@ -301,6 +425,7 @@ est_jogo:
       jal mover_grupo_ini
       jal atualizar_tiros_ini
       jal  colisao_tiro_inimigos
+      jal  colisao_tiros_ini_nave
 
     jogo_desenha:
       li   $a2, PRETO
@@ -309,25 +434,42 @@ est_jogo:
       jal desenhar_nave
       jal desenhar_tiro_jogador
       jal desenhar_tiros_ini
+      jal  desenhar_vidas
 
     jogo_fim:
       lw   $ra, 0($sp)
       addi $sp, $sp, 4
       jr   $ra
 
+#-------------------------------------------------------------------
+# E_PAUSA — nao limpa o buffer nem redesenha nada do jogo.
+#   A tela congela exatamente como estava e "PAUSE" e escrito por
+#   cima, uma unica vez, no bloco de entrada.
+#   Ao voltar, est_jogo limpa tudo e a palavra some sozinha.
+#-------------------------------------------------------------------
 est_pausa:
-    addi $sp, $sp, -4
+    addi $sp, $sp, -8
     sw   $ra, 0($sp)
+    sw   $a0, 4($sp)
 
+    lw   $t0, 4($sp)
+    beqz $t0, pausa_corpo
+    li   $a0, PAUSE_X            # bloco de entrada: escreve uma vez
+    li   $a1, PAUSE_Y
+    li   $a2, BRANCO
+    la   $a3, s_pause
+    jal  desenhar_texto
+
+pausa_corpo:
     lw   $t0, cmd_pausa
     beqz $t0, pausa_fim
     li   $a0, E_JOGO
     jal  mudar_estado
 
-    pausa_fim:
-      lw   $ra, 0($sp)
-      addi $sp, $sp, 4
-      jr   $ra
+pausa_fim:
+    lw   $ra, 0($sp)
+    addi $sp, $sp, 8
+    jr   $ra
 #--------------------------------------------------------------------
 # mudar_estado: alterna o estado atual
 #    $a0 é o proximo estado
@@ -523,6 +665,46 @@ dtj_fim:
     addi $sp, $sp, 4
     jr   $ra
     
+#-------------------------------------------------------------------
+# colisao_tiros_ini_nave — tiros inimigos contra a nave
+#
+#   A nave ocupa:
+#     corpo: (nave_x .. nave_x+2, NAVE_Y)
+#     bico:  (nave_x+1, NAVE_Y-1)
+#   Percorre TODOS os tiros: varios podem acertar no mesmo quadro.
+#-------------------------------------------------------------------
+colisao_tiros_ini_nave:
+    lw   $t6, nave_x
+    addi $t7, $t6, 2              # borda direita da nave
+    li   $t8, NAVE_Y
+    addi $t9, $t8, -1             # linha do bico
+
+    la   $t0, tiros_ini
+    li   $t1, MAX_TIROS_INI
+
+ctn_loop:
+    lw   $t2, 8($t0)              # ativo?
+    beqz $t2, ctn_prox
+
+    lw   $t2, 0($t0)              # x do tiro
+    blt  $t2, $t6, ctn_prox       # a esquerda da nave
+    bgt  $t2, $t7, ctn_prox       # a direita da nave
+
+    lw   $t3, 4($t0)              # y do tiro
+    blt  $t3, $t9, ctn_prox       # acima do bico
+    bgt  $t3, $t8, ctn_prox       # abaixo do corpo
+
+    # --- acertou ---
+    sw   $zero, 8($t0)            # o tiro some
+    lw   $t4, vidas
+    addi $t4, $t4, -1
+    sw   $t4, vidas
+
+ctn_prox:
+    addi $t0, $t0, 12
+    addi $t1, $t1, -1
+    bnez $t1, ctn_loop
+    jr   $ra
 #---INIMIGOS---------------------------------------------------------
 
 #-------------------------------------------------------------------
@@ -1052,6 +1234,54 @@ limpar_buffer_teclado:
      sw $zero, cmd_pausa
      sw $zero, cmd_menu
      jr $ra
+     
+     
+#-------------------------------------------------------------------
+# desenhar_vidas — uma mini-nave por vida, no canto superior esquerdo
+#   Usa o mesmo formato da nave do jogador, em escala 1:1.
+#-------------------------------------------------------------------
+desenhar_vidas:
+    addi $sp, $sp, -16
+    sw   $ra, 0($sp)
+    sw   $s0, 4($sp)
+    sw   $s1, 8($sp)
+    sw   $s2, 12($sp)
+
+    lw   $s1, vidas
+    blez $s1, dv_fim              # zero vidas: nada a desenhar
+    li   $s0, VIDA_X              # coluna corrente
+
+dv_loop:
+    li   $a1, VIDA_Y              # corpo: tres celulas
+    move $a0, $s0
+    li   $a2, BRANCO
+    jal  pintar
+    li   $a1, VIDA_Y
+    addi $a0, $s0, 1
+    li   $a2, BRANCO
+    jal  pintar
+    li   $a1, VIDA_Y
+    addi $a0, $s0, 2
+    li   $a2, BRANCO
+    jal  pintar
+
+    li   $a1, VIDA_Y              # bico
+    addi $a1, $a1, -1
+    addi $a0, $s0, 1
+    li   $a2, BRANCO
+    jal  pintar
+
+    addi $s0, $s0, VIDA_PASSO
+    addi $s1, $s1, -1
+    bnez $s1, dv_loop
+
+dv_fim:
+    lw   $ra, 0($sp)
+    lw   $s0, 4($sp)
+    lw   $s1, 8($sp)
+    lw   $s2, 12($sp)
+    addi $sp, $sp, 16
+    jr   $ra
       
 #--------------------------------------------------------------------
 # terminar execucao
