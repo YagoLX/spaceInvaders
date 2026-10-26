@@ -56,9 +56,14 @@
 .eqv CADENCIA_INI    20    # quadros entre disparos (valor inicial)
 
 #-AUXILIARES PARA HUD---------------------------------------------
-.eqv VIDA_X       1    # coluna da primeira vida
-.eqv VIDA_Y       2    # linha do corpo das mini-naves
-.eqv VIDA_PASSO   4    # 3 do sprite + 1 de espaco
+.eqv VIDA_X        1
+.eqv VIDA_Y        2
+.eqv VIDA_PASSO    4
+
+.eqv META_PONTOS  20    # pontos para vencer == N_INIMIGOS
+.eqv BARRA_X      42    # inicio da barra
+.eqv BARRA_Y       1
+.eqv BARRA_ALT     2    # espessura, em celulas
 
 #-AUXILIARES PARA TEXTO-------------------------------------------
 .eqv CHAR_LARG     3
@@ -128,6 +133,20 @@ f_A: .word 2,5,7,5,5        # .#.  #.#  ###  #.#  #.#
 f_U: .word 5,5,5,5,2        # #.#  #.#  #.#  #.#  .#.
 f_S: .word 3,4,2,1,6        # .##  #..  .#.  ..#  ##.
 f_E: .word 7,4,6,4,7        # ###  #..  ##.  #..  ###
+
+# os 10 digitos, CONTIGUOS: 5 words cada, 20 bytes de passo
+f_digitos:
+  .word 7,5,5,5,7     # 0
+  .word 2,6,2,2,7     # 1
+  .word 7,1,7,4,7     # 2
+  .word 7,1,7,1,7     # 3
+  .word 5,5,7,1,1     # 4
+  .word 7,4,7,1,7     # 5
+  .word 7,4,7,5,7     # 6
+  .word 7,1,1,1,1     # 7
+  .word 7,5,7,5,7     # 8
+  .word 7,5,7,1,7     # 9
+
 
 # "PAUSE": lista de ponteiros terminada em 0
 s_pause: .word f_P, f_A, f_U, f_S, f_E, 0
@@ -358,6 +377,120 @@ dt_fim:
     lw   $s3, 16($sp)
     addi $sp, $sp, 20
     jr   $ra
+    
+#-------------------------------------------------------------------
+# desenhar_pontos — barra de progresso no canto superior direito
+#
+#   Uma celula por ponto, META_PONTOS celulas no total. Como a meta
+#   e 20 e a barra tem 20 celulas, nao ha divisao nenhuma: o numero
+#   de pontos E a largura preenchida.
+#
+#   A moldura vazia aparece sempre, para o jogador ver o quanto falta.
+#-------------------------------------------------------------------
+desenhar_pontos:
+    addi $sp, $sp, -20
+    sw   $ra, 0($sp)
+    sw   $s0, 4($sp)
+    sw   $s1, 8($sp)
+    sw   $s2, 12($sp)
+    sw   $s3, 16($sp)
+
+    lw   $s2, pontos
+    li   $s1, 0                   # coluna corrente, de 0 a META-1
+
+dp_loop:
+    li   $t0, META_PONTOS
+    bge  $s1, $t0, dp_fim
+
+    li   $s3, VERDE               # cor desta coluna: preenchida
+    blt  $s1, $s2, dp_cor_ok
+    li   $s3, AZUL                # ou vazia
+dp_cor_ok:
+
+    li   $s0, 0                   # percorre a espessura
+dp_linha:
+    li   $t0, BARRA_ALT
+    bge  $s0, $t0, dp_prox
+    li   $a0, BARRA_X
+    add  $a0, $a0, $s1
+    li   $a1, BARRA_Y
+    add  $a1, $a1, $s0
+    move $a2, $s3                 # recarrega a cor a cada pixel
+    jal  pintar
+    addi $s0, $s0, 1
+    j    dp_linha
+
+dp_prox:
+    addi $s1, $s1, 1
+    j    dp_loop
+
+dp_fim:
+    li   $a0, 33                 # a esquerda da barra
+    li   $a1, BARRA_Y
+    li   $a2, BRANCO
+    lw   $a3, pontos
+    jal  desenhar_num
+
+    lw   $ra, 0($sp)
+    lw   $s0, 4($sp)
+    lw   $s1, 8($sp)
+    lw   $s2, 12($sp)
+    lw   $s3, 16($sp)
+    addi $sp, $sp, 20
+    jr   $ra
+ 
+#-------------------------------------------------------------------
+# desenhar_num — escreve um numero de 2 digitos com zero a esquerda
+#   $a0 = x, $a1 = y, $a2 = cor, $a3 = valor (0 a 99)
+#-------------------------------------------------------------------
+desenhar_num:
+    addi $sp, $sp, -24
+    sw   $ra, 0($sp)
+    sw   $s0, 4($sp)
+    sw   $s1, 8($sp)
+    sw   $s2, 12($sp)
+    sw   $s3, 16($sp)
+    sw   $s4, 20($sp)
+    move $s0, $a0
+    move $s1, $a1
+    move $s2, $a2
+    move $s3, $a3
+
+    li   $t0, 99                 # satura: 3 digitos nao caberiam
+    ble  $s3, $t0, dn_ok
+    move $s3, $t0
+dn_ok:
+    li   $s4, 10                 # divisor corrente
+
+dn_loop:
+    div  $s3, $s4
+    mflo $t0                     # digito
+    mfhi $s3                     # resto para a proxima casa
+
+    li   $t1, 20                 # 5 words por digito
+    mul  $t1, $t0, $t1
+    la   $a3, f_digitos
+    add  $a3, $a3, $t1
+    move $a0, $s0
+    move $a1, $s1
+    move $a2, $s2
+    jal  desenhar_char
+
+    addi $s0, $s0, CHAR_PASSO
+    li   $t2, 10
+    div  $s4, $t2
+    mflo $s4
+    bnez $s4, dn_loop
+
+    lw   $ra, 0($sp)
+    lw   $s0, 4($sp)
+    lw   $s1, 8($sp)
+    lw   $s2, 12($sp)
+    lw   $s3, 16($sp)
+    lw   $s4, 20($sp)
+    addi $sp, $sp, 24
+    jr   $ra
+ 
 #-----------------------------------------------------------------
 # copiar_buffer: despeja o buffer na memoria da tela
 #-----------------------------------------------------------------
@@ -434,7 +567,8 @@ est_jogo:
       jal desenhar_nave
       jal desenhar_tiro_jogador
       jal desenhar_tiros_ini
-      jal  desenhar_vidas
+      jal desenhar_vidas
+      jal desenhar_pontos
 
     jogo_fim:
       lw   $ra, 0($sp)
