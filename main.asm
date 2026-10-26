@@ -13,7 +13,9 @@
 .eqv E_MENU     0
 .eqv E_JOGO     1
 .eqv E_PAUSA    2
-.eqv N_ESTADOS  3
+.eqv E_VITORIA  3
+.eqv E_DERROTA  4
+.eqv N_ESTADOS  5
 
 
 
@@ -63,7 +65,7 @@
 .eqv VIDA_Y        2
 .eqv VIDA_PASSO    4
 
-.eqv META_PONTOS  20    # pontos para vencer == N_INIMIGOS
+.eqv META_PONTOS  2    # pontos para vencer == N_INIMIGOS
 .eqv BARRA_X      42    # inicio da barra
 .eqv BARRA_Y       1
 .eqv BARRA_ALT     2    # espessura, em celulas
@@ -74,6 +76,13 @@
 .eqv CHAR_PASSO    4    # 3 do glifo + 1 de espaco
 .eqv PAUSE_X      22    # 5 letras x 4 = 19 colunas, centralizado
 .eqv PAUSE_Y      30
+
+#-AUXILIARES PARA FIM DE JOGO-------------------------------------
+.eqv FIM_TEXTO_X  18    # 7 letras x 4 = 27 colunas, centralizado
+.eqv FIM_TEXTO_Y  30    # mesma linha do PAUSE
+.eqv TROFEU_X     27    # 9 colunas, centralizado
+.eqv TROFEU_Y     18    # 10 linhas, termina 2 acima do texto
+.eqv FIM_ESPERA   20    # quadros (1 s) ignorando teclas
 
 #-AUXILIARES PARA MENU--------------------------------------------
 .eqv EEA_X          20    # "EEA-25":   6 letras x 4 = 23 colunas
@@ -96,7 +105,7 @@ quadros: .word 0
 estado:         .word E_MENU
 estado_novo:    .word 1 # 1 se tiver acabado de trocar de estado e 0 c.c
 quadros_est:    .word 0 #quadros desde que entrou no estado
-tabela_estados: .word est_menu, est_jogo, est_pausa
+tabela_estados: .word est_menu, est_jogo, est_pausa, est_vitoria, est_derrota
 
 #---MENU-------------------------------------------------------------
 menu_sel:       .word MENU_JOGAR  # opcao destacada: MENU_JOGAR ou MENU_SAIR
@@ -145,6 +154,7 @@ cmd_pausa:   .word 0    # 1 se P foi apertado
 cmd_menu:    .word 0    # 1 se ENTER foi apertado
 cmd_cima:    .word 0    # 1 se W foi apertado
 cmd_baixo:   .word 0    # 1 se S foi apertado
+cmd_tecla:   .word 0    # 1 se QUALQUER tecla foi apertada
 
 #---FONTE 3x5-----------------------------------------------------
 # Cada caractere sao 5 words; cada word e uma linha de 3 bits,
@@ -164,6 +174,15 @@ f_J: .word 1,1,1,5,2        # ..#  ..#  ..#  #.#  .#.
 f_O: .word 2,5,5,5,2        # .#.  #.#  #.#  #.#  .#.
 f_G: .word 3,4,5,5,3        # .##  #..  #.#  #.#  .##
 f_HIFEN: .word 0,0,7,0,0    # ...  ...  ###  ...  ...
+f_T: .word 7,2,2,2,2        # ###  .#.  .#.  .#.  .#.
+
+# trofeu 9x10 = 3 x 2 blocos 3x5, colados sem espaco
+tr_topo_esq:  .word 7,5,5,3,1
+tr_topo_meio: .word 7,7,7,7,7
+tr_topo_dir:  .word 7,5,5,6,4
+tr_base_esq:  .word 0,0,0,1,3
+tr_base_meio: .word 7,2,2,7,7
+tr_base_dir:  .word 0,0,0,4,6
 
 # os 10 digitos, CONTIGUOS: 5 words cada, 20 bytes de passo
 f_digitos:
@@ -190,8 +209,14 @@ s_invaders: .word f_I, f_N, f_V, f_A, f_D, f_E, f_R, f_S, 0
 s_jogar:    .word f_J, f_O, f_G, f_A, f_R, 0
 s_sair:     .word f_S, f_A, f_I, f_R, 0
 
+# textos de fim de jogo
+s_vitoria: .word f_V, f_I, f_T, f_O, f_R, f_I, f_A, 0
+s_derrota: .word f_D, f_E, f_R, f_R, f_O, f_T, f_A, 0
+
 #---MENSAGENS-------------------------------------------------------
 msg_erro_estado: .asciiz "ERRO: estado invalido"
+msg_vitoria:     .asciiz "VITORIA!\n"
+msg_derrota:     .asciiz "DERROTA!\n"
 
 #---DUPLA BUFFERIZACAO---------------------------------------------
 .align 2
@@ -415,6 +440,72 @@ dt_fim:
     lw   $s2, 12($sp)
     lw   $s3, 16($sp)
     addi $sp, $sp, 20
+    jr   $ra
+
+#-------------------------------------------------------------------
+# desenhar_trofeu — trofeu 9x10 em amarelo
+#   $a0 = x, $a1 = y (canto superior esquerdo)
+#
+#     #########
+#     #.#####.#
+#     #.#####.#
+#     .#######.
+#     ..#####..
+#     ...###...
+#     ....#....
+#     ....#....
+#     ..#####..
+#     .#######.
+#
+#   6 blocos 3x5 no formato da fonte, colados sem espaco.
+#   Usa $s0-$s1 porque desenhar_char destroi $a0-$a3.
+#-------------------------------------------------------------------
+desenhar_trofeu:
+    addi $sp, $sp, -12
+    sw   $ra, 0($sp)
+    sw   $s0, 4($sp)
+    sw   $s1, 8($sp)
+    move $s0, $a0
+    move $s1, $a1
+
+    move $a0, $s0                # topo, esquerda
+    move $a1, $s1
+    li   $a2, AMARELO
+    la   $a3, tr_topo_esq
+    jal  desenhar_char
+    addi $a0, $s0, CHAR_LARG     # topo, meio
+    move $a1, $s1
+    li   $a2, AMARELO
+    la   $a3, tr_topo_meio
+    jal  desenhar_char
+    addi $a0, $s0, CHAR_LARG     # topo, direita
+    addi $a0, $a0, CHAR_LARG
+    move $a1, $s1
+    li   $a2, AMARELO
+    la   $a3, tr_topo_dir
+    jal  desenhar_char
+
+    move $a0, $s0                # base, esquerda
+    addi $a1, $s1, CHAR_ALT
+    li   $a2, AMARELO
+    la   $a3, tr_base_esq
+    jal  desenhar_char
+    addi $a0, $s0, CHAR_LARG     # base, meio
+    addi $a1, $s1, CHAR_ALT
+    li   $a2, AMARELO
+    la   $a3, tr_base_meio
+    jal  desenhar_char
+    addi $a0, $s0, CHAR_LARG     # base, direita
+    addi $a0, $a0, CHAR_LARG
+    addi $a1, $s1, CHAR_ALT
+    li   $a2, AMARELO
+    la   $a3, tr_base_dir
+    jal  desenhar_char
+
+    lw   $ra, 0($sp)
+    lw   $s0, 4($sp)
+    lw   $s1, 8($sp)
+    addi $sp, $sp, 12
     jr   $ra
     
 #-------------------------------------------------------------------
@@ -676,6 +767,7 @@ est_jogo:
       jal atualizar_tiros_ini
       jal  colisao_tiro_inimigos
       jal  colisao_tiros_ini_nave
+      jal  checar_fim_jogo
 
     jogo_desenha:
       li   $a2, PRETO
@@ -720,6 +812,75 @@ pausa_corpo:
     jal  mudar_estado
 
 pausa_fim:
+    lw   $ra, 0($sp)
+    addi $sp, $sp, 8
+    jr   $ra
+
+#-------------------------------------------------------------------
+# E_VITORIA — mesmo molde de E_PAUSA: congela a tela do ultimo
+#   quadro e desenha por cima, uma unica vez, trofeu e "VITORIA".
+#   Qualquer tecla volta ao menu, mas so apos FIM_ESPERA quadros:
+#   sem isso, o Espaco que o jogador segurava atirando pularia a
+#   tela na hora (repeticao de tecla).
+#-------------------------------------------------------------------
+est_vitoria:
+    addi $sp, $sp, -8
+    sw   $ra, 0($sp)
+    sw   $a0, 4($sp)
+
+    lw   $t0, 4($sp)
+    beqz $t0, vitoria_corpo
+    li   $a0, TROFEU_X           # bloco de entrada: desenha uma vez
+    li   $a1, TROFEU_Y
+    jal  desenhar_trofeu
+    li   $a0, FIM_TEXTO_X
+    li   $a1, FIM_TEXTO_Y
+    li   $a2, AMARELO
+    la   $a3, s_vitoria
+    jal  desenhar_texto
+
+vitoria_corpo:
+    lw   $t0, quadros_est
+    li   $t1, FIM_ESPERA
+    blt  $t0, $t1, vitoria_fim   # ainda na trava
+    lw   $t0, cmd_tecla
+    beqz $t0, vitoria_fim
+    li   $a0, E_MENU
+    jal  mudar_estado
+
+vitoria_fim:
+    lw   $ra, 0($sp)
+    addi $sp, $sp, 8
+    jr   $ra
+
+#-------------------------------------------------------------------
+# E_DERROTA — igual a E_VITORIA, sem trofeu: "DERROTA" em vermelho
+#   por cima da tela congelada; qualquer tecla, apos FIM_ESPERA
+#   quadros, volta ao menu.
+#-------------------------------------------------------------------
+est_derrota:
+    addi $sp, $sp, -8
+    sw   $ra, 0($sp)
+    sw   $a0, 4($sp)
+
+    lw   $t0, 4($sp)
+    beqz $t0, derrota_corpo
+    li   $a0, FIM_TEXTO_X        # bloco de entrada: escreve uma vez
+    li   $a1, FIM_TEXTO_Y
+    li   $a2, VERMELHO
+    la   $a3, s_derrota
+    jal  desenhar_texto
+
+derrota_corpo:
+    lw   $t0, quadros_est
+    li   $t1, FIM_ESPERA
+    blt  $t0, $t1, derrota_fim   # ainda na trava
+    lw   $t0, cmd_tecla
+    beqz $t0, derrota_fim
+    li   $a0, E_MENU
+    jal  mudar_estado
+
+derrota_fim:
     lw   $ra, 0($sp)
     addi $sp, $sp, 8
     jr   $ra
@@ -811,6 +972,41 @@ jr_tiros:
     addi $sp, $sp, 4
     jr   $ra
     
+#-------------------------------------------------------------------
+# checar_fim_jogo — decide se a partida acabou
+#   Vitoria: pontos >= META_PONTOS. Derrota: vidas <= 0.
+#   Se as duas ocorrem no mesmo quadro, vitoria tem prioridade.
+#   Imprime o resultado no console (syscall 4) e pede a transicao;
+#   quem espera a tecla e o estado seguinte (regra 1: sem laco aqui).
+#-------------------------------------------------------------------
+checar_fim_jogo:
+    addi $sp, $sp, -4
+    sw   $ra, 0($sp)
+
+    lw   $t0, pontos
+    li   $t1, META_PONTOS
+    blt  $t0, $t1, cfj_testa_derrota
+    la   $a0, msg_vitoria
+    li   $v0, 4
+    syscall
+    li   $a0, E_VITORIA
+    jal  mudar_estado
+    j    cfj_fim
+
+cfj_testa_derrota:
+    lw   $t0, vidas
+    bgtz $t0, cfj_fim
+    la   $a0, msg_derrota
+    li   $v0, 4
+    syscall
+    li   $a0, E_DERROTA
+    jal  mudar_estado
+
+cfj_fim:
+    lw   $ra, 0($sp)
+    addi $sp, $sp, 4
+    jr   $ra
+
 #---FIM ESTADOS-----------------------------------------------------
 
 #---NAVE------------------------------------------------------------
@@ -1424,6 +1620,7 @@ ler_entrada:
     sw   $zero, cmd_menu
     sw   $zero, cmd_cima
     sw   $zero, cmd_baixo
+    sw   $zero, cmd_tecla
 
     lui  $t0, 0xffff
     li   $t4, MAX_TECLAS             # teto de seguranca
@@ -1435,6 +1632,8 @@ le_loop:
     beqz $t1, le_fim                 # fila vazia
     lw   $t2, 4($t0)
     addi $t4, $t4, -1
+    li   $t5, 1                      # qualquer byte conta como tecla
+    sw   $t5, cmd_tecla
 
     li   $t3, 65                     # normaliza maiuscula
     blt  $t2, $t3, le_testa
@@ -1517,6 +1716,7 @@ limpar_buffer_teclado:
      sw $zero, cmd_menu
      sw $zero, cmd_cima
      sw $zero, cmd_baixo
+     sw $zero, cmd_tecla
      jr $ra
      
      
