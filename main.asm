@@ -51,6 +51,10 @@
 .eqv GRUPO_DIVISOR    3 # move a cada 4 quadros
 .eqv N_INIMIGOS       20
 
+#-AUXILIARES PARA TIROS INIMIGOS----------------------------------
+.eqv MAX_TIROS_INI    4    # tiros inimigos simultaneos na tela
+.eqv CADENCIA_INI    20    # quadros entre disparos (valor inicial)
+
 
 .data
 quadros: .word 0
@@ -75,6 +79,15 @@ grupo_ini_y:   .word INI_Y_BASE
 grupo_x_min:   .word 0
 grupo_x_max:   .word 29
 grupo_ini_dir: .word 1 
+
+#---TIROS DOS INIMIGOS--------------------------------------------
+# cada tiro ocupa 12 bytes: x, y, ativo
+tiros_ini: .word 0,0,0,  0,0,0,  0,0,0,  0,0,0
+
+# Cadencia em VARIAVEL, nao constante: permite dificuldade
+# progressiva depois, bastando diminuir este valor.
+cadencia_tiro_ini: .word CADENCIA_INI
+contador_tiro_ini: .word CADENCIA_INI   # conta regressiva
 
 #---TIRO DO JOGADOR-----------------------------------------------
 ha_tiro_jogador:  .word 0
@@ -286,6 +299,7 @@ est_jogo:
       jal  mover_nave
       jal mover_tiro_jogador
       jal mover_grupo_ini
+      jal atualizar_tiros_ini
       jal  colisao_tiro_inimigos
 
     jogo_desenha:
@@ -294,6 +308,7 @@ est_jogo:
       jal desenhar_inimigos
       jal desenhar_nave
       jal desenhar_tiro_jogador
+      jal desenhar_tiros_ini
 
     jogo_fim:
       lw   $ra, 0($sp)
@@ -343,11 +358,22 @@ mudar_estado:
 #   Chamado pela TRANSICAO menu -> jogo, nunca pela entrada do estado:
 #   E_JOGO tambem e alcancado vindo da pausa, e ali nao se reinicia.
 #-------------------------------------------------------------------
+#-------------------------------------------------------------------
+# jogo_reset — devolve o jogo ao estado inicial
+#
+#   Chamado pela TRANSICAO menu -> jogo, nunca pela entrada do estado:
+#   E_JOGO tambem e alcancado vindo da pausa, e ali nao se reinicia.
+#-------------------------------------------------------------------
 jogo_reset:
     addi $sp, $sp, -4
     sw   $ra, 0($sp)
 
-    # --- nave e tiro ---
+    # --- placar ---
+    sw   $zero, pontos
+    li   $t0, 5
+    sw   $t0, vidas
+
+    # --- nave e tiro do jogador ---
     li   $t0, 30
     sw   $t0, nave_x
     sw   $zero, ha_tiro_jogador
@@ -364,11 +390,25 @@ jogo_reset:
     la   $t1, inimigos
     li   $t2, N_INIMIGOS
     li   $t3, 1
-jr_loop:
+jr_inimigos:
     sw   $t3, 8($t1)             # campo 'vivo'
     addi $t1, $t1, 12
     addi $t2, $t2, -1
-    bnez $t2, jr_loop
+    bnez $t2, jr_inimigos
+
+    # --- limpa os tiros inimigos ---
+    la   $t1, tiros_ini
+    li   $t2, MAX_TIROS_INI
+jr_tiros:
+    sw   $zero, 8($t1)           # campo 'ativo'
+    addi $t1, $t1, 12
+    addi $t2, $t2, -1
+    bnez $t2, jr_tiros
+
+    # --- cadencia de volta ao valor inicial ---
+    li   $t0, CADENCIA_INI
+    sw   $t0, cadencia_tiro_ini
+    sw   $t0, contador_tiro_ini
 
     jal  recalcular_limites      # o cache depende de quem esta vivo
 
@@ -725,6 +765,186 @@ cti_fim:
     lw   $ra, 0($sp)
     addi $sp, $sp, 4
     jr   $ra
+    
+    
+#-------------------------------------------------------------------
+# escolher_atirador — decide QUAL inimigo dispara
+#   saida: $v0 = endereco do registro do inimigo, ou 0 se nenhum vivo
+#
+#   Rotina folha: syscalls do MARS nao alteram os registradores $t.
+#-------------------------------------------------------------------
+escolher_atirador:
+    # --- 1) conta quantos estao vivos ---
+    la   $t0, inimigos
+    li   $t1, N_INIMIGOS
+    li   $t2, 0
+ea_conta:
+    lw   $t3, 8($t0)
+    beqz $t3, ea_conta_prox
+    addi $t2, $t2, 1
+ea_conta_prox:
+    addi $t0, $t0, 12
+    addi $t1, $t1, -1
+    bnez $t1, ea_conta
+
+    beqz $t2, ea_vazio
+
+    # --- 2) sorteia um indice entre 0 e vivos-1 ---
+    li   $v0, 42
+    li   $a0, 0                  # gerador 0
+    move $a1, $t2                # limite superior exclusivo
+    syscall                      # resultado em $a0
+    move $t4, $a0
+
+    # --- 3) caminha ate o n-esimo vivo ---
+    la   $t0, inimigos
+ea_busca:
+    lw   $t3, 8($t0)
+    beqz $t3, ea_busca_prox
+    beqz $t4, ea_achou
+    addi $t4, $t4, -1
+ea_busca_prox:
+    addi $t0, $t0, 12
+    j    ea_busca
+
+ea_achou:
+    move $v0, $t0
+    jr   $ra
+ea_vazio:
+    li   $v0, 0
+    jr   $ra
+
+#-------------------------------------------------------------------
+# slot_tiro_ini_livre — procura um lugar vago no vetor de tiros
+#   saida: $v0 = endereco do slot, ou 0 se todos ocupados
+#-------------------------------------------------------------------
+slot_tiro_ini_livre:
+    la   $t0, tiros_ini
+    li   $t1, MAX_TIROS_INI
+stl_loop:
+    lw   $t2, 8($t0)             # ativo?
+    beqz $t2, stl_achou
+    addi $t0, $t0, 12
+    addi $t1, $t1, -1
+    bnez $t1, stl_loop
+    li   $v0, 0                  # cheio
+    jr   $ra
+stl_achou:
+    move $v0, $t0
+    jr   $ra
+
+#-------------------------------------------------------------------
+# disparar_tiro_ini — cria um tiro, se houver vaga e atirador
+#   O tiro nasce no centro do inimigo, uma linha abaixo dele.
+#-------------------------------------------------------------------
+disparar_tiro_ini:
+    addi $sp, $sp, -8
+    sw   $ra, 0($sp)
+    sw   $s0, 4($sp)
+
+    jal  slot_tiro_ini_livre
+    beqz $v0, dti_fim            # ja ha MAX_TIROS_INI na tela
+    move $s0, $v0                # guarda: o proximo jal destroi $v0
+
+    jal  escolher_atirador
+    beqz $v0, dti_fim            # nenhum inimigo vivo
+
+    lw   $t0, 0($v0)             # col_rel
+    lw   $t1, grupo_ini_x
+    add  $t0, $t0, $t1
+    addi $t0, $t0, 1             # centro do inimigo (3 de largura)
+    sw   $t0, 0($s0)
+
+    lw   $t0, 4($v0)             # lin_rel
+    lw   $t1, grupo_ini_y
+    add  $t0, $t0, $t1
+    addi $t0, $t0, INI_ALTURA    # logo abaixo do sprite
+    sw   $t0, 4($s0)
+
+    li   $t0, 1
+    sw   $t0, 8($s0)             # ativa o slot
+
+dti_fim:
+    lw   $ra, 0($sp)
+    lw   $s0, 4($sp)
+    addi $sp, $sp, 8
+    jr   $ra
+
+#-------------------------------------------------------------------
+# mover_tiros_ini — desce os ativos, desativa os que saem da tela
+#-------------------------------------------------------------------
+mover_tiros_ini:
+    la   $t0, tiros_ini
+    li   $t1, MAX_TIROS_INI
+mti_loop:
+    lw   $t2, 8($t0)
+    beqz $t2, mti_prox
+    lw   $t3, 4($t0)
+    addi $t3, $t3, 1             # desce uma linha
+    li   $t4, ALT
+    blt  $t3, $t4, mti_grava
+    sw   $zero, 8($t0)           # saiu por baixo: libera o slot
+    j    mti_prox
+mti_grava:
+    sw   $t3, 4($t0)
+mti_prox:
+    addi $t0, $t0, 12
+    addi $t1, $t1, -1
+    bnez $t1, mti_loop
+    jr   $ra
+
+#-------------------------------------------------------------------
+# desenhar_tiros_ini — pinta os ativos
+#-------------------------------------------------------------------
+desenhar_tiros_ini:
+    addi $sp, $sp, -12
+    sw   $ra, 0($sp)
+    sw   $s0, 4($sp)
+    sw   $s1, 8($sp)
+
+    la   $s0, tiros_ini
+    li   $s1, MAX_TIROS_INI
+dts_loop:
+    lw   $t0, 8($s0)
+    beqz $t0, dts_prox
+    lw   $a0, 0($s0)
+    lw   $a1, 4($s0)
+    li   $a2, COR_TIRO_I
+    jal  pintar
+dts_prox:
+    addi $s0, $s0, 12
+    addi $s1, $s1, -1
+    bnez $s1, dts_loop
+
+    lw   $ra, 0($sp)
+    lw   $s0, 4($sp)
+    lw   $s1, 8($sp)
+    addi $sp, $sp, 12
+    jr   $ra
+
+#-------------------------------------------------------------------
+# atualizar_tiros_ini — um quadro dos tiros inimigos
+#   Move os existentes e dispara um novo quando o contador zera.
+#-------------------------------------------------------------------
+atualizar_tiros_ini:
+    addi $sp, $sp, -4
+    sw   $ra, 0($sp)
+
+    jal  mover_tiros_ini
+
+    lw   $t0, contador_tiro_ini
+    addi $t0, $t0, -1
+    bgtz $t0, ati_grava
+    jal  disparar_tiro_ini
+    lw   $t0, cadencia_tiro_ini  # recarrega o contador
+ati_grava:
+    sw   $t0, contador_tiro_ini
+
+    lw   $ra, 0($sp)
+    addi $sp, $sp, 4
+    jr   $ra
+
+
 #--------------------------------------------------------------------
 # esperar: faz o frame esperar o tempo de um frame antes de prosseguir
 #--------------------------------------------------------------------
@@ -742,7 +962,7 @@ esperar:
   addi $t0, $t0, 1 
   sw $t0, quadros
   jr $ra
-
+  
 #---TRATAMENTO DE ENTRADAS------------------------------------------
 #-------------------------------------------------------------------
 #ler_entrada: salva entrada em "tecla", salva 0 em tecla c.c.
